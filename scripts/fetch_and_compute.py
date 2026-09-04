@@ -146,6 +146,32 @@ def compute_series(rows):
     }
 
 
+def fetch_intraday(symbol):
+    """5-minute bars for the most recent trading session (Yahoo's `range=1d`
+    returns the latest available session even outside market hours / on
+    weekends). Used only for the 1D view - rolling vol/Sharpe stay daily."""
+    url = (
+        f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+        f"?range=1d&interval=5m"
+    )
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        payload = json.load(resp)
+    result = payload["chart"]["result"][0]
+    ts = result["timestamp"]
+    quote = result["indicators"]["quote"][0]
+    gmtoffset = result["meta"].get("gmtoffset", 0)
+    times, closes = [], []
+    for i in range(len(ts)):
+        c = quote["close"][i]
+        if c is None:
+            continue
+        local_dt = datetime.datetime.utcfromtimestamp(ts[i] + gmtoffset)
+        times.append(local_dt.strftime("%H:%M"))
+        closes.append(round(c, 4))
+    return {"times": times, "close": closes}
+
+
 def percentile(sorted_vals, pct):
     if not sorted_vals:
         return None
@@ -182,8 +208,13 @@ def main():
         rows = [(d, c) for d, c in rows if d >= cutoff]
         series = compute_series(rows)
         series["name"] = name
+        try:
+            series["intraday"] = fetch_intraday(symbol)
+        except Exception as exc:  # intraday is a nice-to-have; never fail the whole run over it
+            print(f"{symbol}: intraday fetch failed ({exc}), skipping")
+            series["intraday"] = {"times": [], "close": []}
         out["assets"][symbol] = series
-        print(f"{symbol}: {len(rows)} daily rows, last close {series['stats']['last_close']}")
+        print(f"{symbol}: {len(rows)} daily rows, {len(series['intraday']['times'])} intraday points, last close {series['stats']['last_close']}")
 
     out_path = os.path.join(DATA_DIR, "etf_data.json")
     with open(out_path, "w", encoding="utf-8") as f:

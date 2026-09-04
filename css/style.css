@@ -1,86 +1,36 @@
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
+/*
+ * Fixed dark identity — deliberate, not adaptive. Rodrigo wants this dashboard
+ * to always look like a dark professional terminal, regardless of the
+ * visitor's OS/browser theme, so there's no @media(prefers-color-scheme) or
+ * light palette here: just one committed dark palette, painted explicitly.
+ */
 :root{
-  color-scheme: light;
-  --bg: #F5F7F9;
-  --surface: #FFFFFF;
-  --surface-2: #EAEFF3;
-  --border: rgba(16,23,32,0.10);
-  --border-strong: rgba(16,23,32,0.16);
-  --text-primary: #10161F;
-  --text-secondary: #55606B;
-  --text-muted: #8993A0;
-  --grid: #E3E8EC;
-  --good: #0ca30c;
-  --good-bg: #E3F6E3;
-  --good-text: #0a6b0a;
-  --warning: #b5790a;
-  --warning-bg: #FBF0DA;
-  --warning-text: #8a5d06;
-  --critical: #d03b3b;
-  --critical-bg: #FBE8E8;
-  --critical-text: #a12c2c;
-  --accent-ewz: #2f8f5b;
-  --accent-ewz-fill: rgba(47,143,91,0.14);
-  --accent-fxe: #2f6fb0;
-  --accent-fxe-fill: rgba(47,111,176,0.14);
-  --accent-eem: #c74f8a;
-  --accent-eem-fill: rgba(199,79,138,0.14);
-}
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
-    color-scheme: dark;
-    --bg: #0D1218;
-    --surface: #141B24;
-    --surface-2: #1B2430;
-    --border: rgba(255,255,255,0.10);
-    --border-strong: rgba(255,255,255,0.18);
-    --text-primary: #F2F5F7;
-    --text-secondary: #AEB8C2;
-    --text-muted: #78838F;
-    --grid: #24303D;
-    --good: #0ca30c;
-    --good-bg: rgba(12,163,12,0.16);
-    --good-text: #4ddb4d;
-    --warning: #d9a52c;
-    --warning-bg: rgba(217,165,44,0.18);
-    --warning-text: #e8bd58;
-    --critical: #e05a5a;
-    --critical-bg: rgba(208,59,59,0.20);
-    --critical-text: #ff8f8f;
-    --accent-ewz: #37a363;
-    --accent-ewz-fill: rgba(55,163,99,0.20);
-    --accent-fxe: #4f8fd6;
-    --accent-fxe-fill: rgba(79,143,214,0.20);
-    --accent-eem: #d366a0;
-    --accent-eem-fill: rgba(211,102,160,0.20);
-  }
-}
-:root[data-theme="dark"]{
   color-scheme: dark;
-  --bg: #0D1218;
-  --surface: #141B24;
-  --surface-2: #1B2430;
-  --border: rgba(255,255,255,0.10);
-  --border-strong: rgba(255,255,255,0.18);
-  --text-primary: #F2F5F7;
-  --text-secondary: #AEB8C2;
-  --text-muted: #78838F;
-  --grid: #24303D;
-  --good: #0ca30c;
-  --good-bg: rgba(12,163,12,0.16);
-  --good-text: #4ddb4d;
-  --warning: #d9a52c;
-  --warning-bg: rgba(217,165,44,0.18);
-  --warning-text: #e8bd58;
-  --critical: #e05a5a;
-  --critical-bg: rgba(208,59,59,0.20);
-  --critical-text: #ff8f8f;
-  --accent-ewz: #37a363;
+  --bg: #0D1117;
+  --surface: #161B22;
+  --surface-2: #1C2330;
+  --border: #21262D;
+  --border-strong: #30363D;
+  --text-primary: #E6EDF3;
+  --text-secondary: #8B949E;
+  --text-muted: #6E7681;
+  --grid: #21262D;
+  --good: #3FB950;
+  --good-bg: rgba(63,185,80,0.15);
+  --good-text: #56D364;
+  --warning: #D29922;
+  --warning-bg: rgba(210,153,34,0.15);
+  --warning-text: #E3B341;
+  --critical: #F85149;
+  --critical-bg: rgba(248,81,73,0.15);
+  --critical-text: #FF7B72;
+  --accent-ewz: #37A363;
   --accent-ewz-fill: rgba(55,163,99,0.20);
-  --accent-fxe: #4f8fd6;
+  --accent-fxe: #4F8FD6;
   --accent-fxe-fill: rgba(79,143,214,0.20);
-  --accent-eem: #d366a0;
+  --accent-eem: #D366A0;
   --accent-eem-fill: rgba(211,102,160,0.20);
 }
 
@@ -189,6 +139,11 @@ section.panel.active{ display:block; }
 }
 .chart-card .desc{ font-size:0.72rem; color:var(--text-muted); margin-bottom:8px;}
 .chart-card .canvas-wrap{ height:220px; position:relative; }
+.intraday-note{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  text-align:center; padding:0 24px; font-size:0.8rem; color:var(--text-muted);
+  background:var(--surface);
+}
 
 .thesis{
   background:var(--surface-2); border:1px solid var(--border); border-radius:16px;

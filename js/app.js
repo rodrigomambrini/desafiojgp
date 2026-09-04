@@ -9,12 +9,16 @@
 const ORDER = ["EWZ", "FXE", "EEM"]; // ordered so accent hues sit CVD-safe adjacent (green / blue / magenta)
 const ACCENT_VAR = { EWZ: "--accent-ewz", FXE: "--accent-fxe", EEM: "--accent-eem" };
 const RANGES = [
+  { key: "1d", label: "1D", intraday: true },
+  { key: "1w", label: "1S", days: 5 },
+  { key: "1m", label: "1M", days: 21 },
   { key: "6m", label: "6M", days: 126 },
   { key: "1y", label: "1A", days: 252 },
   { key: "3y", label: "3A", days: 756 },
   { key: "5y", label: "5A", days: 1260 },
   { key: "max", label: "Max", days: null },
 ];
+const DEFAULT_RANGE_KEY = "1m";
 
 let DASHBOARD_DATA = null;
 let THESIS_DATA = null;
@@ -36,6 +40,20 @@ function computeStatsForRange(asset, days) {
   const base = close[0];
   const perf = close.map(c => (c / base - 1) * 100);
   return { dates, close, perf, dd, rvol, rsharpe };
+}
+
+// 1D has no daily rolling-window data to slice - it uses the 5-minute
+// intraday series fetched separately, indexed to the prior close (so it
+// lines up with the "variacao do dia" stat), with an intraday-only drawdown.
+function computeIntradayStats(asset) {
+  const intraday = asset.intraday || { times: [], close: [] };
+  const prevClose = asset.close.length > 1 ? asset.close[asset.close.length - 2] : asset.close[asset.close.length - 1];
+  const times = intraday.times;
+  const close = intraday.close;
+  const perf = close.map(c => (c / prevClose - 1) * 100);
+  let peak = close.length ? Math.max(prevClose, close[0]) : prevClose;
+  const dd = close.map(c => { peak = Math.max(peak, c); return (c / peak - 1) * 100; });
+  return { dates: times, close, perf, dd };
 }
 
 function buildTabs() {
@@ -109,12 +127,16 @@ function panelTemplate(sym, a) {
       <div class="chart-card">
         <h3>Volatilidade rolante</h3>
         <div class="desc">Desvio-padrao dos retornos diarios, janela de 21 pregoes, anualizada</div>
-        <div class="canvas-wrap"><canvas id="chart-vol-${sym}"></canvas></div>
+        <div class="canvas-wrap"><canvas id="chart-vol-${sym}"></canvas>
+          <div class="intraday-note" id="note-vol-${sym}" hidden>Janela de 21 pregoes — nao se aplica a visao intradiaria. Selecione 1S ou mais.</div>
+        </div>
       </div>
       <div class="chart-card">
         <h3>Sharpe rolante</h3>
         <div class="desc">Retorno/risco anualizado, janela de 63 pregoes, rf = 0%</div>
-        <div class="canvas-wrap"><canvas id="chart-sharpe-${sym}"></canvas></div>
+        <div class="canvas-wrap"><canvas id="chart-sharpe-${sym}"></canvas>
+          <div class="intraday-note" id="note-sharpe-${sym}" hidden>Janela de 63 pregoes — nao se aplica a visao intradiaria. Selecione 1S ou mais.</div>
+        </div>
       </div>
     </div>
 
@@ -141,12 +163,12 @@ function buildRangeButtons(sym) {
   RANGES.forEach((r) => {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "range-btn" + (r.key === "3y" ? " active" : "");
+    btn.className = "range-btn" + (r.key === DEFAULT_RANGE_KEY ? " active" : "");
     btn.textContent = r.label;
     btn.addEventListener("click", () => {
       el.querySelectorAll(".range-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
-      renderCharts(sym, r.days);
+      renderCharts(sym, r);
     });
     el.appendChild(btn);
   });
@@ -171,12 +193,22 @@ function baseLineOptions() {
   };
 }
 
-function renderCharts(sym, days) {
+function renderCharts(sym, range) {
   const a = DASHBOARD_DATA.assets[sym];
-  const st = computeStatsForRange(a, days);
-  const labels = st.dates.map(fmtDateShort);
+  const isIntraday = !!range.intraday;
+  const st = isIntraday ? computeIntradayStats(a) : computeStatsForRange(a, range.days);
+  const labels = isIntraday ? st.dates : st.dates.map(fmtDateShort);
   const accent = cssVar(ACCENT_VAR[sym]);
   const good = cssVar("--good"), critical = cssVar("--critical");
+
+  const volNote = document.getElementById("note-vol-" + sym);
+  const sharpeNote = document.getElementById("note-sharpe-" + sym);
+  const volCanvas = document.getElementById("chart-vol-" + sym);
+  const sharpeCanvas = document.getElementById("chart-sharpe-" + sym);
+  volNote.hidden = !isIntraday;
+  sharpeNote.hidden = !isIntraday;
+  volCanvas.hidden = isIntraday;
+  sharpeCanvas.hidden = isIntraday;
 
   if (!charts[sym]) charts[sym] = {};
   const mk = (key, canvasId, cfg) => {
@@ -195,6 +227,12 @@ function renderCharts(sym, days) {
     data: { labels, datasets: [{ data: st.dd, borderColor: critical, backgroundColor: critical + "22", borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.05 }] },
     options: baseLineOptions(),
   });
+
+  if (isIntraday) {
+    if (charts[sym].vol) { charts[sym].vol.destroy(); charts[sym].vol = null; }
+    if (charts[sym].sharpe) { charts[sym].sharpe.destroy(); charts[sym].sharpe = null; }
+    return;
+  }
 
   mk("vol", "chart-vol-" + sym, {
     type: "line",
@@ -216,9 +254,10 @@ function renderCharts(sym, days) {
 }
 
 async function loadData() {
+  const bust = Date.now();
   const [dashRes, thesisRes] = await Promise.all([
-    fetch("data/etf_data.json", { cache: "no-store" }),
-    fetch("data/thesis.json", { cache: "no-store" }),
+    fetch(`data/etf_data.json?t=${bust}`, { cache: "no-store" }),
+    fetch(`data/thesis.json?t=${bust}`, { cache: "no-store" }),
   ]);
   if (!dashRes.ok || !thesisRes.ok) throw new Error("Falha ao carregar os dados (etf_data.json / thesis.json).");
   DASHBOARD_DATA = await dashRes.json();
@@ -259,7 +298,8 @@ async function init() {
 
   renderShell();
   buildTabs();
-  ORDER.forEach(sym => { buildRangeButtons(sym); renderCharts(sym, RANGES[2].days); });
+  const defaultRange = RANGES.find(r => r.key === DEFAULT_RANGE_KEY);
+  ORDER.forEach(sym => { buildRangeButtons(sym); renderCharts(sym, defaultRange); });
   selectTab(ORDER[0]);
 
   const priceTs = new Date(DASHBOARD_DATA.generated_at_utc);
