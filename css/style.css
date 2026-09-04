@@ -140,10 +140,15 @@ section.panel.active{ display:block; }
 .chart-card .desc{ font-size:0.72rem; color:var(--text-muted); margin-bottom:8px;}
 .chart-card .canvas-wrap{ height:220px; position:relative; }
 .intraday-note{
-  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  position:absolute; inset:0; align-items:center; justify-content:center;
   text-align:center; padding:0 24px; font-size:0.8rem; color:var(--text-muted);
   background:var(--surface);
 }
+/* `display:flex` must only apply when NOT hidden - otherwise this class's
+   own display value beats the browser's [hidden]{display:none} rule (same
+   specificity, author sheet wins), so the note stayed visible over the
+   chart on every range, not just 1D. */
+.intraday-note:not([hidden]){ display:flex; }
 
 .thesis{
   background:var(--surface-2); border:1px solid var(--border); border-radius:16px;
