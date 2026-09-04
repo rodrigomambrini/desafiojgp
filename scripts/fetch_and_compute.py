@@ -149,7 +149,12 @@ def compute_series(rows):
 def fetch_intraday(symbol):
     """5-minute bars for the most recent trading session (Yahoo's `range=1d`
     returns the latest available session even outside market hours / on
-    weekends). Used only for the 1D view - rolling vol/Sharpe stay daily."""
+    weekends). Used only for the 1D view - rolling vol/Sharpe stay daily.
+
+    Times are kept in UTC (not the exchange's local time) to match the
+    "atualizado em ... UTC" timestamp shown in the page header - otherwise
+    the chart looks hours "behind" to a visitor outside US Eastern time.
+    """
     url = (
         f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
         f"?range=1d&interval=5m"
@@ -160,14 +165,13 @@ def fetch_intraday(symbol):
     result = payload["chart"]["result"][0]
     ts = result["timestamp"]
     quote = result["indicators"]["quote"][0]
-    gmtoffset = result["meta"].get("gmtoffset", 0)
     times, closes = [], []
     for i in range(len(ts)):
         c = quote["close"][i]
         if c is None:
             continue
-        local_dt = datetime.datetime.utcfromtimestamp(ts[i] + gmtoffset)
-        times.append(local_dt.strftime("%H:%M"))
+        utc_dt = datetime.datetime.utcfromtimestamp(ts[i])
+        times.append(utc_dt.strftime("%H:%M"))
         closes.append(round(c, 4))
     return {"times": times, "close": closes}
 

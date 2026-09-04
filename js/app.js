@@ -37,23 +37,20 @@ function computeStatsForRange(asset, days) {
   const dd = asset.drawdown_pct.slice(start);
   const rvol = asset.rolling_vol_pct.slice(start);
   const rsharpe = asset.rolling_sharpe.slice(start);
-  const base = close[0];
-  const perf = close.map(c => (c / base - 1) * 100);
-  return { dates, close, perf, dd, rvol, rsharpe };
+  return { dates, close, dd, rvol, rsharpe };
 }
 
 // 1D has no daily rolling-window data to slice - it uses the 5-minute
-// intraday series fetched separately, indexed to the prior close (so it
-// lines up with the "variacao do dia" stat), with an intraday-only drawdown.
+// intraday series fetched separately (UTC timestamps, matching the
+// "atualizado em ... UTC" header), with an intraday-only drawdown.
 function computeIntradayStats(asset) {
   const intraday = asset.intraday || { times: [], close: [] };
   const prevClose = asset.close.length > 1 ? asset.close[asset.close.length - 2] : asset.close[asset.close.length - 1];
   const times = intraday.times;
   const close = intraday.close;
-  const perf = close.map(c => (c / prevClose - 1) * 100);
   let peak = close.length ? Math.max(prevClose, close[0]) : prevClose;
   const dd = close.map(c => { peak = Math.max(peak, c); return (c / peak - 1) * 100; });
-  return { dates: times, close, perf, dd };
+  return { dates: times, close, dd };
 }
 
 function buildTabs() {
@@ -115,8 +112,8 @@ function panelTemplate(sym, a) {
 
     <div class="charts-grid">
       <div class="chart-card">
-        <h3>Desempenho (indexado a 100)</h3>
-        <div class="desc">Preco de fechamento reindexado ao inicio do periodo selecionado</div>
+        <h3>Preco</h3>
+        <div class="desc">Preco de fechamento (USD) ao longo do periodo selecionado</div>
         <div class="canvas-wrap"><canvas id="chart-perf-${sym}"></canvas></div>
       </div>
       <div class="chart-card">
@@ -174,7 +171,7 @@ function buildRangeButtons(sym) {
   });
 }
 
-function baseLineOptions() {
+function baseLineOptions(yPrefix = "") {
   return {
     responsive: true, maintainAspectRatio: false, animation: false,
     interaction: { mode: "index", intersect: false },
@@ -184,11 +181,18 @@ function baseLineOptions() {
         backgroundColor: cssVar("--surface"), titleColor: cssVar("--text-primary"),
         bodyColor: cssVar("--text-secondary"), borderColor: cssVar("--border-strong"), borderWidth: 1,
         padding: 8, titleFont: { family: "IBM Plex Mono", size: 11 }, bodyFont: { family: "IBM Plex Mono", size: 11 },
+        callbacks: yPrefix ? { label: ctx => yPrefix + ctx.parsed.y.toFixed(2) } : undefined,
       },
     },
     scales: {
       x: { grid: { display: false }, ticks: { color: cssVar("--text-muted"), maxTicksLimit: 6, font: { family: "IBM Plex Mono", size: 10 } } },
-      y: { grid: { color: cssVar("--grid") }, ticks: { color: cssVar("--text-muted"), font: { family: "IBM Plex Mono", size: 10 } } },
+      y: {
+        grid: { color: cssVar("--grid") },
+        ticks: {
+          color: cssVar("--text-muted"), font: { family: "IBM Plex Mono", size: 10 },
+          callback: yPrefix ? (v => yPrefix + v) : undefined,
+        },
+      },
     },
   };
 }
@@ -218,8 +222,8 @@ function renderCharts(sym, range) {
 
   mk("perf", "chart-perf-" + sym, {
     type: "line",
-    data: { labels, datasets: [{ data: st.perf, borderColor: accent, backgroundColor: accent + "22", borderWidth: 1.75, pointRadius: 0, fill: true, tension: 0.05 }] },
-    options: baseLineOptions(),
+    data: { labels, datasets: [{ data: st.close, borderColor: accent, backgroundColor: accent + "22", borderWidth: 1.75, pointRadius: 0, fill: true, tension: 0.05 }] },
+    options: baseLineOptions("$"),
   });
 
   mk("dd", "chart-dd-" + sym, {
