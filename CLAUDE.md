@@ -38,11 +38,22 @@ scripts/build_site.py            (gitignored dir: site/) builds the Artifact's e
 
 ## Design — this is the "Radar Macro" theme, not Mambrini's
 
-Rodrigo explicitly asked to reuse the theme already built for the Artifact dashboard (**not** Mambrini's light navy/serif editorial look, and **not** a generic dark GitHub-style `#0d1117` theme — an earlier draft of his prompt described that by mistake; there's no such theme anywhere in his other projects, checked at the time).
+Rodrigo explicitly asked to reuse the theme already built for the Artifact dashboard (**not** Mambrini's light navy/serif editorial look). After seeing it render light in his own (light-OS) Chrome, he then explicitly asked for a **fixed, always-dark** identity, GitHub-dark-flavored — so `css/style.css` `:root` is now a single committed dark palette (`#0D1117` bg / `#161B22` surface / `#E6EDF3` text), no `@media(prefers-color-scheme)` or `[data-theme]` branching. **Don't reintroduce a light mode or OS-adaptive theme** without asking first — that's what caused the confusion. `site/dashboard_template.html` (the Artifact build) was patched to the same fixed palette for parity.
 
 - **Type**: `Fraunces` (display — tab tickers, section headings), `IBM Plex Sans` (UI/body), `IBM Plex Mono` (all numbers — prices, dates, axis ticks; use the `.num` class).
-- **Color**: full light/dark tokens in `css/style.css` `:root` / `prefers-color-scheme: dark` / `[data-theme="dark"]`. Per-asset accent hues are deliberately ordered `EWZ` (green) → `FXE` (blue) → `EEM` (magenta) — that order is load-bearing: it's the only ordering of those 3 hues that clears the CVD-safety adjacency check (validated by hand against `dataviz` skill's `validate_palette.js` logic, since Node wasn't available — ran the same math via the browser's `javascript_tool` instead). **Don't reorder the tabs** without re-checking that.
+- **Color**: one dark palette, painted explicitly (see above) — no theme switching logic anywhere. Per-asset accent hues are deliberately ordered `EWZ` (green) → `FXE` (blue) → `EEM` (magenta) — that order is load-bearing: it's the only ordering of those 3 hues that clears the CVD-safety adjacency check (validated by hand against `dataviz` skill's `validate_palette.js` logic, since Node wasn't available — ran the same math via the browser's `javascript_tool` instead). **Don't reorder the tabs** without re-checking that.
 - Status colors (`--good` / `--warning` / `--critical`) are separate from the per-asset accents on purpose — don't reuse an asset's accent color to mean "good/bad".
+
+## Chart ranges
+
+`js/app.js`'s `RANGES` array: `1D` (intraday, 5-min bars), `1S`/`1M`/`6M`/`1A`/`3A`/`5A` (daily-data slices), `Max`. Default is `1M` (`DEFAULT_RANGE_KEY`).
+
+- **1D is fundamentally different from the rest**: `scripts/fetch_and_compute.py`'s `fetch_intraday()` pulls Yahoo's `range=1d&interval=5m` separately per asset and stores it as `assets.<SYM>.intraday.{times, close}`. The Performance and Drawdown charts render it fine (indexed to the prior close). **Rolling vol/Sharpe cannot be shown for 1D** — they're 21-/63-*trading-day* windows, meaningless on 5-minute bars — so those two chart cards show a text placeholder (`.intraday-note`, toggled via `renderCharts()`) instead of a canvas whenever `range.intraday` is true. Don't try to compute an "intraday Sharpe"; it doesn't mean anything with this method.
+- Every other range just slices `dates`/`close`/`drawdown_pct`/`rolling_vol_pct`/`rolling_sharpe` from the daily arrays — no new data needed.
+
+## Cache-busting
+
+`js/app.js`'s `loadData()` appends `?t=${Date.now()}` to both JSON fetches, on top of `cache:"no-store"`. This isn't redundant: `cache:"no-store"` only controls the *browser's* cache, but GitHub Pages is served through a CDN (Fastly) that can still return a cached response for the same URL — the query-string bust forces a distinct URL so the CDN can't shortcut it. Keep both.
 
 ## Interpretations logic (`js/interpretations.js`)
 
