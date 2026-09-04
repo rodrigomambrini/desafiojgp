@@ -1,0 +1,18 @@
+# Artifact-specific build infra (not part of the GitHub Pages site) -
+# scripts/build_site.py embeds data/etf_data.json inline into this to
+# publish the parallel Claude Artifact version. Kept out of the public
+# repo since dashboard_build.html duplicates ~280KB of data on every build.
+site/
+
+# Personal/working files, not meant to be public
+*.xlsx
+~$*.xlsx
+
+# Local Claude Code settings
+.claude/settings.local.json
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc

@@ -1,0 +1,37 @@
+{
+  "generated_at_utc": "2026-09-04T12:00:00Z",
+  "assets": {
+    "EWZ": {
+      "paragraphs": [
+        "O EWZ engatou um rali desde as minimas do mes passado, subindo mais de 12% e acumulando alta de cerca de 19% no ano - superando o Nasdaq-100 no periodo. O movimento foi puxado por commodities em alta (destaque para o petroleo e a Petrobras) e pelos bancos, com o Ibovespa rompendo a marca de 181 mil pontos. Parte da forca vem da expectativa em torno da eleicao presidencial de outubro: o mercado vem precificando com otimismo a chance de um novo governo com agenda mais ortodoxa.",
+        "O cambio reforca a tese: o real vem se valorizando, e casas como o BofA projetam USD/BRL proximo de 5,25 ate o fim de 2026, sustentado por carry de juros elevado, commodities fortes e uma leitura politica mais construtiva. Do lado dos riscos, o mercado de opcoes ja mostra posicionamento comprado bastante concentrado em EWZ, o que aumenta a sensibilidade a qualquer ruido pre-eleitoral. Vale acompanhar pesquisas eleitorais e o ritmo de corte de juros do Fed, que tambem pesa no apetite global por risco emergente."
+      ],
+      "sources": [
+        {"label": "Benzinga - Brazil Stocks, ETFs Hit High on Currency Strength", "url": "https://www.benzinga.com/etfs/specialty-etfs/26/04/51771940/brazil-stocks-etfs-hit-high-currency-strength-central-bank-mercx"},
+        {"label": "CNBC - Traders pile into this market beating the Nasdaq", "url": "https://www.cnbc.com/2026/09/02/traders-pile-into-this-international-stock-market-thats-beating-the-nasdaq.html"},
+        {"label": "Rio Times - Brazil Markets: Ibovespa & the Real", "url": "https://www.riotimesonline.com/brazil-markets-ibovespa-real-wednesday-september-2-2026/"}
+      ]
+    },
+    "EEM": {
+      "paragraphs": [
+        "O pano de fundo para emergentes segue construtivo: a leitura predominante e de um dolar estavel a mais fraco à frente, com diferencial de juros reais ainda favoravel a EM frente aos desenvolvidos e uma trajetoria de inflacao mais benigna em boa parte do universo emergente. Esse mix - carry atrativo, moedas menos pressionadas e politica monetaria mais ortodoxa em varios paises - segue sendo o principal suporte do fluxo para a classe de ativos.",
+        "O contraponto e a incerteza sobre o timing dos cortes do Fed, que continua sendo o principal driver marginal do dolar e, por consequencia, do apetite por EM. O FMI revisou para cima a inflacao esperada de emergentes em 2026 (de 4,8% para 5,5%), puxada por custos de insumos como fertilizantes, o que pode limitar o espaco de afrouxamento monetario em economias mais frageis. Em resumo: tese estrutural positiva, mas com sensibilidade tatica alta a dados americanos de emprego e inflacao."
+      ],
+      "sources": [
+        {"label": "LPL Research - 5 Reasons Emerging Markets Could Continue Their Run", "url": "https://www.lpl.com/research/weekly-market-commentary/five-reasons-run-in-emerging-markets-could-continue.html"},
+        {"label": "State Street - Emerging market debt: Enduring strength outlook", "url": "https://www.ssga.com/us/en/institutional/insights/emerging-market-debt-enduring-strength-outlook-holds"},
+        {"label": "BofA Private Bank - Emerging Markets 2026 Outlook", "url": "https://www.privatebank.bankofamerica.com/articles/emerging-markets-outlook-2026.html"}
+      ]
+    },
+    "FXE": {
+      "paragraphs": [
+        "O euro voltou a operar levemente abaixo de US$ 1,16, com o mercado dividido sobre o proximo passo do BCE: a chance de uma alta de juros em setembro esta perto de 50/50, ja que o choque energetico que motivou o aperto anterior vem perdendo forca - um sinal que, isoladamente, tende a pressionar a moeda no curto prazo.",
+        "Do lado americano, o mercado vem precificando probabilidade relevante de alta de juros do Fed em setembro apos sinalizacao mais dura da diretoria e nova alta do petroleo, mesmo com a dissidencia de membros do FOMC pedindo aperto imediato na reuniao anterior. O diferencial de juros ECB (2,40%) vs. Fed (3,75%) segue favorecendo o dolar no curto prazo, mas o cenario-base de varias casas ainda aposta em fortalecimento gradual do euro ao longo de 2026 caso o Fed retome os cortes e o BCE mantenha a taxa estavel. O principal risco de cauda, para os dois lados, e uma escalada no Oriente Medio."
+      ],
+      "sources": [
+        {"label": "Central Bank Watch - EUR/USD Forecast 2026", "url": "https://centralbank.watch/compare/currency-pair-deep-dives/eur-usd/"},
+        {"label": "Cambridge Currencies - EUR/USD Forecast, Euro to Dollar", "url": "https://cambridgecurrencies.com/euro-to-dollar-forecast/"}
+      ]
+    }
+  }
+}

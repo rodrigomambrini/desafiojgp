@@ -1,0 +1,36 @@
+name: Update ETF prices
+
+on:
+  schedule:
+    # Hourly, 13:00-21:00 UTC = 10:00-18:00 America/Sao_Paulo, Mon-Fri
+    # (covers the NYSE/NYSE Arca session where EWZ/EEM/FXE trade)
+    - cron: "0 13-21 * * 1-5"
+  workflow_dispatch: {} # lets you trigger a refresh manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch prices and recompute metrics
+        run: python scripts/fetch_and_compute.py
+
+      - name: Commit data/etf_data.json if it changed
+        run: |
+          git config user.name "radar-macro-bot"
+          git config user.email "actions@users.noreply.github.com"
+          if git diff --quiet -- data/etf_data.json; then
+            echo "No changes to data/etf_data.json"
+            exit 0
+          fi
+          git add data/etf_data.json
+          git commit -m "Update ETF price data ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+          git push
