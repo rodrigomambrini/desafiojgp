@@ -1,0 +1,58 @@
+/* Fundo page - reuses tokens, .stat, .chart-card, .range-btn, .thesis etc.
+   from style.css; this file only adds the pieces unique to this page
+   (tables, allocation layout, colored gain/loss cells). */
+
+.fund-header{ margin-bottom:22px; }
+.fund-header h1{
+  font-family:"Fraunces", Georgia, serif; font-weight:600; font-size:1.7rem;
+  letter-spacing:-0.01em; margin:0 0 4px;
+}
+.fund-header .sub{ color:var(--text-secondary); font-size:0.9rem; margin-bottom:6px; }
+.fund-header .meta{ color:var(--text-muted); font-size:0.78rem; }
+
+.section-title{
+  font-family:"Fraunces", serif; font-weight:600; font-size:1.05rem;
+  margin:32px 0 12px;
+}
+.section-title:first-of-type{ margin-top:0; }
+
+.alloc-grid{ display:grid; grid-template-columns:280px 1fr; gap:16px; align-items:start; }
+@media (max-width:760px){ .alloc-grid{ grid-template-columns:1fr; } }
+.alloc-chart-card{
+  background:var(--surface); border:1px solid var(--border); border-radius:14px;
+  padding:16px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+}
+.alloc-chart-card .canvas-wrap{ position:relative; width:100%; height:240px; }
+
+.table-card{
+  background:var(--surface); border:1px solid var(--border); border-radius:14px;
+  padding:6px 4px; overflow-x:auto;
+}
+table.data-table{ width:100%; border-collapse:collapse; font-size:0.84rem; }
+table.data-table th{
+  text-align:right; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.06em;
+  color:var(--text-muted); font-weight:600; padding:10px 12px; white-space:nowrap;
+  border-bottom:1px solid var(--border);
+}
+table.data-table td{
+  text-align:right; padding:10px 12px; white-space:nowrap; border-bottom:1px solid var(--border);
+  font-family:"IBM Plex Mono", ui-monospace, monospace; font-variant-numeric:tabular-nums;
+}
+table.data-table th:first-child, table.data-table td:first-child{ text-align:left; font-family:inherit; }
+table.data-table tbody tr:last-child td{ border-bottom:none; }
+table.data-table tbody tr:hover{ background:var(--surface-2); }
+.asset-dot{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:8px; }
+
+.mval-good{ color:var(--good-text); }
+.mval-warning{ color:var(--warning-text); }
+.mval-critical{ color:var(--critical-text); }
+.mval-muted{ color:var(--text-muted); }
+
+.legend-row{ display:flex; gap:16px; flex-wrap:wrap; margin-top:14px; justify-content:center; }
+.legend-item{ display:flex; align-items:center; gap:6px; font-size:0.76rem; color:var(--text-secondary); }
+.legend-dot{ width:9px; height:9px; border-radius:50%; }
+
+.empty-state-card{
+  background:var(--surface-2); border:1px dashed var(--border-strong); border-radius:14px;
+  padding:22px 24px; color:var(--text-muted); font-size:0.88rem; line-height:1.6;
+}

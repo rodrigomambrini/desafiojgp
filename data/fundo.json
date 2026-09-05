@@ -1,0 +1,14 @@
+{
+  "fund_name": "Fundo Macro Rodrigo 2026",
+  "subtitle": "Macro Global | Guerra, Eleicoes, Fiscal, IA",
+  "inception_date": "2026-09-04",
+  "capital": 100000000,
+  "currency_label": "R$",
+  "horizon_label": "dez/2026",
+  "positions": {
+    "EWZ": { "weight": 0.40, "entry_price": 37.86 },
+    "EEM": { "weight": 0.35, "entry_price": 68.70 },
+    "FXE": { "weight": 0.25, "entry_price": 107.15 }
+  },
+  "notes": "Sem rebalanceamento automatico - quantidades de cotas fixadas na entrada, os pesos exibidos sao os pesos atuais (podem driftar com o preco). Capital e precos tratados na mesma unidade monetaria (sem conversao cambial aplicada)."
+}

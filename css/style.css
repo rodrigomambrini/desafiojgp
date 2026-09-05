@@ -45,6 +45,19 @@ body{
 
 .wrap{ max-width:1180px; margin:0 auto; padding:28px 20px 64px; }
 
+/* Site-level nav - shared across index.html and fundo.html, distinct from
+   the per-asset tabs inside "Radar Macro" (nav.tabs below). */
+nav.site-nav{
+  display:flex; gap:26px; padding:14px 20px; border-bottom:1px solid var(--border);
+  max-width:1180px; margin:0 auto;
+}
+nav.site-nav a{
+  font-size:0.76rem; font-weight:600; letter-spacing:0.09em; text-transform:uppercase;
+  color:var(--text-muted); text-decoration:none; padding-bottom:4px; border-bottom:2px solid transparent;
+}
+nav.site-nav a:hover{ color:var(--text-primary); }
+nav.site-nav a.active{ color:var(--text-primary); border-bottom-color:var(--text-primary); }
+
 header.top{
   display:flex; align-items:baseline; justify-content:space-between; gap:16px;
   margin-bottom:22px; flex-wrap:wrap;
