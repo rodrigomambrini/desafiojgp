@@ -90,6 +90,33 @@ function buildFundAndAssetSeries() {
   const nav = dates.map((_, i) => ASSET_ORDER.reduce((sum, sym) => sum + SHARES[sym] * closesSince[sym][i], 0));
   FUND_SERIES = computeSeries(dates, nav);
   FUND_SERIES.closesSince = closesSince;
+  FUND_SERIES.cdiValues = buildCdiSeries(dates);
+}
+
+// CDI (Brazilian interbank rate, from data/etf_data.json's "cdi" field -
+// fetched server-side from the Banco Central SGS API, series 12, not Yahoo
+// Finance: CDI is a daily rate, not a traded price series) compounded into
+// an index and forward-filled onto the fund's trading-day calendar, so it
+// can be sliced/rebased with the exact same sliceForRange() used for the
+// fund and the assets.
+function buildCdiSeries(fundDates) {
+  const inception = FUNDO.inception_date;
+  const cdi = ETF.cdi || { dates: [], daily_rate_pct: [] };
+  const cumByDate = {};
+  let cum = 100;
+  cumByDate[inception] = cum;
+  for (let i = 0; i < cdi.dates.length; i++) {
+    const d = cdi.dates[i];
+    if (d <= inception) continue;
+    cum *= 1 + cdi.daily_rate_pct[i] / 100;
+    cumByDate[d] = cum;
+  }
+  const sortedCdiDates = Object.keys(cumByDate).sort();
+  let ptr = 0;
+  return fundDates.map(fd => {
+    while (ptr + 1 < sortedCdiDates.length && sortedCdiDates[ptr + 1] <= fd) ptr++;
+    return cumByDate[sortedCdiDates[ptr]];
+  });
 }
 
 function computeShares() {
@@ -325,9 +352,11 @@ function computeIntradayFundReturn() {
 
 function renderPerfChart(range) {
   const isIntraday = !!range.intraday;
-  let labels, fundData, assetData = {};
+  let labels, fundData, assetData = {}, cdiData = null;
 
   if (isIntraday) {
+    // CDI is a once-a-day published rate, not intraday-quoted - no meaningful
+    // 1D line for it, so it's omitted rather than faked as flat.
     const id = computeIntradayFundReturn();
     labels = id.times;
     fundData = id.fundRet;
@@ -339,6 +368,7 @@ function renderPerfChart(range) {
     ASSET_ORDER.forEach(sym => {
       assetData[sym] = sliceForRange(ASSET_SINCE[sym], range).values;
     });
+    cdiData = sliceForRange({ dates: FUND_SERIES.dates, values: FUND_SERIES.cdiValues }, range).values;
   }
 
   const datasets = [
@@ -347,6 +377,10 @@ function renderPerfChart(range) {
       label: sym, data: assetData[sym], borderColor: cssVar(ASSET_ACCENT_VAR[sym]), backgroundColor: "transparent",
       borderWidth: 1.25, pointRadius: 0, tension: 0.05,
     })),
+    ...(cdiData ? [{
+      label: "CDI", data: cdiData, borderColor: cssVar("--warning"), backgroundColor: "transparent",
+      borderWidth: 1.5, borderDash: [5, 3], pointRadius: 0, tension: 0.05,
+    }] : []),
   ];
 
   if (charts.perf) charts.perf.destroy();

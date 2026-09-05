@@ -146,6 +146,29 @@ def compute_series(rows):
     }
 
 
+def fetch_cdi(start_date, end_date):
+    """Daily CDI rate (% per day) from the Banco Central do Brasil SGS API,
+    series 12 - the standard free source for this (no API key), same one
+    Rodrigo's Mambrini-Asset-Management project already uses for Tesouro
+    Selic (series 11). Not on Yahoo Finance - CDI is a BR interbank rate,
+    not a traded instrument with a price series.
+    """
+    url = (
+        "https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados"
+        f"?formato=json&dataInicial={start_date.strftime('%d/%m/%Y')}"
+        f"&dataFinal={end_date.strftime('%d/%m/%Y')}"
+    )
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        rows = json.load(resp)
+    dates, rates = [], []
+    for row in rows:
+        d, m, y = row["data"].split("/")
+        dates.append(f"{y}-{m}-{d}")
+        rates.append(float(row["valor"]))
+    return {"dates": dates, "daily_rate_pct": rates}
+
+
 def fetch_intraday(symbol):
     """5-minute bars for the most recent trading session (Yahoo's `range=1d`
     returns the latest available session even outside market hours / on
@@ -219,6 +242,13 @@ def main():
             series["intraday"] = {"times": [], "close": []}
         out["assets"][symbol] = series
         print(f"{symbol}: {len(rows)} daily rows, {len(series['intraday']['times'])} intraday points, last close {series['stats']['last_close']}")
+
+    try:
+        out["cdi"] = fetch_cdi(cutoff, datetime.date.today())
+        print(f"CDI: {len(out['cdi']['dates'])} daily rows")
+    except Exception as exc:  # CDI is used for a benchmark line; never fail the whole run over it
+        print(f"CDI fetch failed ({exc}), skipping")
+        out["cdi"] = {"dates": [], "daily_rate_pct": []}
 
     out_path = os.path.join(DATA_DIR, "etf_data.json")
     with open(out_path, "w", encoding="utf-8") as f:
