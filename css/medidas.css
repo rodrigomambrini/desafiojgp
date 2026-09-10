@@ -29,11 +29,11 @@
 
 .corr-scroll{ overflow-x:auto; border-radius:14px; }
 .corr-grid{
-  display:grid; grid-template-columns:64px repeat(15, 46px); gap:3px; width:max-content;
+  display:grid; grid-template-columns:64px repeat(16, 46px); gap:3px; width:max-content;
   background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px;
 }
 @media (max-width:480px){
-  .corr-grid{ grid-template-columns:52px repeat(15, 40px); gap:2px; padding:10px; }
+  .corr-grid{ grid-template-columns:52px repeat(16, 40px); gap:2px; padding:10px; }
   .corr-cell{ font-size:0.68rem; }
   .corr-label{ font-size:0.66rem; }
 }

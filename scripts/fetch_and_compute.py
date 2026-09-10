@@ -40,6 +40,7 @@ ASSETS = {
 # heatmap computes its own correlation directly from `close`. Radar Macro
 # and Fundo don't read this bucket at all.
 COMPARISON_ONLY = {
+    "SPY": "SPDR S&P 500 ETF Trust",
     "XTN": "SPDR S&P Transportation ETF",
     "XLY": "Consumer Discretionary Select Sector SPDR Fund",
     "GLD": "SPDR Gold Shares",

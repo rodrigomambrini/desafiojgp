@@ -2,18 +2,19 @@
  * Medidas Econometricas - correlation, a long-only portfolio simulator, an
  * efficient-frontier scatter, and a max-Sharpe (Markowitz) recommendation.
  *
- * Two different asset universes on this one page, on purpose:
- *  - ASSET_ORDER (5 tickers): the portfolio simulator/frontier/Markowitz
- *    section. Kept small because N adjustable sliders stops being usable
- *    well before N=15.
- *  - CORR_ASSET_ORDER (15 tickers): the correlation heatmap only, per
- *    Rodrigo's request to broaden *that section specifically* to a wider
- *    sector-ETF universe (XLK/XTN/XLY/GLD/XLV/XLP/XLE/XLI/XLB/XLF/XLU/TLT)
- *    without touching the simulator. getClose()/getName() below read
- *    transparently from either data/etf_data.json bucket (`assets` - full
- *    rolling-metrics treatment - or the lighter `comparison_assets`, close
- *    prices only) so the heatmap code doesn't care which bucket a symbol
- *    lives in.
+ * One asset universe, ASSET_ORDER (16 tickers: EWZ/FXE/EEM/XLK/XLE plus 11
+ * more sector/benchmark ETFs) - the correlation heatmap, the portfolio
+ * simulator, the frontier and the Markowitz optimum all share it, per
+ * Rodrigo's request to fold the correlation-matrix universe into the
+ * Markowitz chain too. Only 5 of the 16 have a validated accent color
+ * (accentColorFor() falls back to a neutral gray for the rest - a fully
+ * CVD-validated 16-hue categorical palette isn't practical, and ticker
+ * text labels make it unnecessary for identification anyway).
+ *
+ * getClose()/getDates()/getName() read transparently from either
+ * data/etf_data.json bucket (`assets` - full rolling-metrics treatment -
+ * or the lighter `comparison_assets`, close prices only) so the rest of
+ * the code doesn't care which bucket a symbol lives in.
  *
  * Everything is computed client-side from data/etf_data.json (same file
  * the other two pages read, fetched via the same Yahoo Finance pipeline in
@@ -28,33 +29,27 @@
  * the UI, not just in this comment.
  */
 
-// Order picked for CVD-safe adjacency across all 5 accent hues (validated
-// by hand the same way Radar Macro's EWZ/FXE/EEM order was - see CLAUDE.md)
-// - don't reorder without re-checking that.
-const ASSET_ORDER = ["FXE", "EWZ", "XLK", "XLE", "EEM"];
+const ASSET_ORDER = ["EWZ", "FXE", "EEM", "XLK", "XLE", "SPY", "XTN", "XLY", "GLD", "XLV", "XLP", "XLI", "XLB", "XLF", "XLU", "TLT"];
 const ASSET_ACCENT_VAR = { EWZ: "--accent-ewz", FXE: "--accent-fxe", EEM: "--accent-eem", XLK: "--accent-xlk", XLE: "--accent-xle" };
-
-// Correlation-heatmap-only universe (15 tickers). No per-asset accent
-// colors here - at this count a fully CVD-validated categorical palette
-// isn't practical, and it's unnecessary anyway since every row/column is
-// already labeled by its ticker text in the matrix itself.
-const CORR_ASSET_ORDER = ["EWZ", "FXE", "EEM", "XLK", "XLE", "XTN", "XLY", "GLD", "XLV", "XLP", "XLI", "XLB", "XLF", "XLU", "TLT"];
+function accentColorFor(sym) { return ASSET_ACCENT_VAR[sym] ? cssVar(ASSET_ACCENT_VAR[sym]) : cssVar("--text-muted"); }
+// At 16 assets, listing every one (mostly at/near 0%) is noise - keep only
+// weights above 0.5%, sorted descending, for any "which assets matter here" display.
+function sigWeightSymbols(w) { return ASSET_ORDER.filter(sym => w[sym] > 0.005).sort((a, b) => w[b] - w[a]); }
 
 const WINDOW = 63; // trading days - correlation, covariance and realized-return window (all consistent)
 const TRADING_DAYS = 252;
-const FRONTIER_SAMPLES = 2500; // random long-only weight draws for the feasible-set cloud (grid search doesn't scale past ~3 assets)
+const FRONTIER_SAMPLES = 4000; // random long-only weight draws for the feasible-set cloud (grid search doesn't scale past ~3 assets)
 
 let ETF = null;
-let RETURNS = {};      // sym -> array of daily returns over the last WINDOW days (memoized, shared by both universes)
-let ANN_RETURN = {};   // sym -> annualized realized return over the window (portfolio universe only)
-let COV = null;        // 5x5 annualized covariance matrix, order = ASSET_ORDER (portfolio universe)
-let CORR = null;       // 5x5 correlation matrix (portfolio universe)
-let CORR_FULL = null;  // 15x15 correlation matrix, order = CORR_ASSET_ORDER (heatmap only)
+let RETURNS = {};      // sym -> array of daily returns over the last WINDOW days
+let ANN_RETURN = {};   // sym -> annualized realized return over the window
+let COV = null;        // 16x16 annualized covariance matrix, order = ASSET_ORDER
+let CORR = null;       // 16x16 correlation matrix, order = ASSET_ORDER - also drives the heatmap directly
 let SIGMA = {};        // sym -> annualized volatility
 let RF = 0;            // annualized risk-free rate (from CDI)
 let FRONTIER_CLOUD = [];
-let MARKOWITZ = null;  // { w: [.,.,.], ret, vol, sharpe }
-let sliderWeights = { EWZ: 30, FXE: 20, EEM: 20, XLK: 15, XLE: 15 };
+let MARKOWITZ = null;  // { w: {...}, ret, vol, sharpe, contrib, diversification }
+let sliderWeights = Object.fromEntries(ASSET_ORDER.map(sym => [sym, 100 / ASSET_ORDER.length]));
 const charts = {};
 
 function getAssetData(sym) { return (ETF.assets && ETF.assets[sym]) || (ETF.comparison_assets && ETF.comparison_assets[sym]); }
@@ -80,21 +75,6 @@ function windowReturns(sym) {
   for (let i = 1; i < windowCloses.length; i++) rets.push(windowCloses[i] / windowCloses[i - 1] - 1);
   RETURNS[sym] = rets;
   return rets;
-}
-
-function computeFullCorrelation() {
-  CORR_ASSET_ORDER.forEach(sym => windowReturns(sym));
-  CORR_FULL = CORR_ASSET_ORDER.map(symI => CORR_ASSET_ORDER.map(symJ => {
-    const ri = RETURNS[symI], rj = RETURNS[symJ];
-    const mi = mean(ri), mj = mean(rj);
-    let cov = 0;
-    for (let k = 0; k < ri.length; k++) cov += (ri[k] - mi) * (rj[k] - mj);
-    cov /= ri.length - 1;
-    let vi = 0, vj = 0;
-    for (let k = 0; k < ri.length; k++) { vi += (ri[k] - mi) ** 2; vj += (rj[k] - mj) ** 2; }
-    vi /= ri.length - 1; vj /= rj.length - 1;
-    return cov / Math.sqrt(vi * vj);
-  }));
 }
 
 function computeReturnsAndStats() {
@@ -221,10 +201,35 @@ function randomSimplexWeights() {
   return w;
 }
 
+// Uniform-over-the-full-simplex Dirichlet(1) sampling concentrates almost
+// all its mass near the centroid once N gets into the teens (every weight
+// close to 1/N) - fine at N=3-5, but at N=16 it draws a tight blob instead
+// of a spread-out cloud, because "all 16 near equal" is overwhelmingly the
+// most probable outcome. Sampling a random k-asset *subset* (k drawn small)
+// and only Dirichlet-sampling within it (zero elsewhere) instead visits the
+// simplex's lower-dimensional faces - sparse, concentrated combinations -
+// which is where the interesting risk/return spread actually lives (it's
+// also exactly the kind of portfolio the tangency optimizer itself favors).
+function randomSparseSubsetWeights() {
+  const n = ASSET_ORDER.length;
+  const k = 2 + Math.floor(Math.random() * Math.min(6, n - 1)); // 2..7 active assets
+  const pool = [...ASSET_ORDER];
+  const chosen = [];
+  for (let i = 0; i < k; i++) chosen.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  const draws = chosen.map(() => -Math.log(Math.random()));
+  const sum = draws.reduce((a, b) => a + b, 0);
+  const w = {};
+  ASSET_ORDER.forEach(sym => { w[sym] = 0; });
+  chosen.forEach((sym, i) => { w[sym] = draws[i] / sum; });
+  return w;
+}
+
 function buildFrontierAndMarkowitz() {
   const cloud = [];
   for (let k = 0; k < FRONTIER_SAMPLES; k++) {
-    const w = randomSimplexWeights();
+    // Mix: half full-dimension draws (dense, "average" portfolios), half
+    // sparse-subset draws (concentrated, where the spread actually is).
+    const w = k % 2 === 0 ? randomSimplexWeights() : randomSparseSubsetWeights();
     const s = portfolioStats(w);
     cloud.push({ x: s.vol * 100, y: s.ret * 100 });
   }
@@ -250,14 +255,14 @@ function corrColor(v) {
 }
 
 function renderCorrelation(root) {
-  const order = CORR_ASSET_ORDER;
+  const order = ASSET_ORDER;
   const cells = [];
   cells.push(`<div></div>`);
   order.forEach(sym => cells.push(`<div class="corr-label">${sym}</div>`));
   order.forEach((symRow, i) => {
     cells.push(`<div class="corr-label">${symRow}</div>`);
     order.forEach((symCol, j) => {
-      const v = CORR_FULL[i][j];
+      const v = CORR[i][j];
       const textColor = Math.abs(v) > 0.55 ? "#0a0e14" : cssVar("--text-primary");
       cells.push(`<div class="corr-cell" style="background:${corrColor(v)}; color:${textColor}">${v.toFixed(2)}</div>`);
     });
@@ -266,7 +271,7 @@ function renderCorrelation(root) {
   const pairs = [];
   for (let i = 0; i < order.length; i++) {
     for (let j = i + 1; j < order.length; j++) {
-      pairs.push({ a: order[i], b: order[j], v: CORR_FULL[i][j] });
+      pairs.push({ a: order[i], b: order[j], v: CORR[i][j] });
     }
   }
   const avgCorr = mean(pairs.map(p => p.v));
@@ -301,7 +306,7 @@ function renderCorrelation(root) {
 function updateSliderUI() {
   ASSET_ORDER.forEach(sym => {
     document.getElementById("slider-" + sym).value = sliderWeights[sym];
-    document.getElementById("slider-val-" + sym).textContent = Math.round(sliderWeights[sym]) + "%";
+    document.getElementById("slider-val-" + sym).textContent = fmtNum(sliderWeights[sym], 1) + "%";
   });
   const total = ASSET_ORDER.reduce((s, sym) => s + sliderWeights[sym], 0);
   const totalEl = document.getElementById("slider-total");
@@ -327,11 +332,11 @@ function renderSimResults() {
       <div class="sim-stat"><div class="label">Diversificacao</div><div class="value">${fmtNum(s.diversification, 0)}%</div></div>
     </div>
     <div class="risk-contrib">
-      ${ASSET_ORDER.map(sym => `<div style="width:${(s.contrib[sym] * 100).toFixed(1)}%; background:var(${ASSET_ACCENT_VAR[sym]})">${s.contrib[sym] > 0.12 ? (s.contrib[sym] * 100).toFixed(0) + "%" : ""}</div>`).join("")}
+      ${ASSET_ORDER.map(sym => `<div style="width:${(s.contrib[sym] * 100).toFixed(1)}%; background:${accentColorFor(sym)}">${s.contrib[sym] > 0.12 ? (s.contrib[sym] * 100).toFixed(0) + "%" : ""}</div>`).join("")}
     </div>
     <div class="risk-contrib-legend">
-      <span>Contribuicao ao risco:</span>
-      ${ASSET_ORDER.map(sym => `<span><span class="asset-dot" style="background:var(${ASSET_ACCENT_VAR[sym]})"></span>${sym} ${(s.contrib[sym] * 100).toFixed(0)}%</span>`).join("")}
+      <span>Contribuicao ao risco (so pesos &gt; 0.5%):</span>
+      ${sigWeightSymbols(w).map(sym => `<span><span class="asset-dot" style="background:${accentColorFor(sym)}"></span>${sym} ${(s.contrib[sym] * 100).toFixed(0)}%</span>`).join("")}
     </div>
     ${renderAlternativesTable(s)}
   `;
@@ -353,7 +358,7 @@ function renderAlternativesTable(currentStats) {
     { label: "Seu portfolio", s: currentStats, cls: "current" },
     { label: "100% EWZ", s: ewz100, cls: "" },
     { label: `Equal weight (${(equalW * 100).toFixed(0)}% cada, ${ASSET_ORDER.length} ativos)`, s: equal, cls: "" },
-    { label: `Otimo Markowitz (${ASSET_ORDER.map(sym => `${sym} ${(MARKOWITZ.w[sym] * 100).toFixed(0)}%`).join("/")})`, s: MARKOWITZ, cls: "optimal" },
+    { label: `Otimo Markowitz (${sigWeightSymbols(MARKOWITZ.w).map(sym => `${sym} ${(MARKOWITZ.w[sym] * 100).toFixed(0)}%`).join("/")})`, s: MARKOWITZ, cls: "optimal" },
   ];
   return `
     <table class="alt-table">
@@ -397,7 +402,7 @@ function renderFrontierChart() {
         { label: "Combinacoes possiveis", data: FRONTIER_CLOUD, backgroundColor: cssVar("--border-strong"), pointRadius: 2, pointHoverRadius: 3 },
         ...ASSET_ORDER.map(sym => ({
           label: sym, data: [{ x: SIGMA[sym] * 100, y: ANN_RETURN[sym] * 100 }],
-          backgroundColor: cssVar(ASSET_ACCENT_VAR[sym]), pointRadius: 7, pointHoverRadius: 9, pointStyle: "rectRot",
+          backgroundColor: accentColorFor(sym), pointRadius: 7, pointHoverRadius: 9, pointStyle: "rectRot",
         })),
         { label: "Seu portfolio", data: [{ x: currentS.vol * 100, y: currentS.ret * 100 }], backgroundColor: cssVar("--text-primary"), pointRadius: 8, pointHoverRadius: 10, pointStyle: "circle" },
         { label: "Otimo Markowitz", data: [{ x: MARKOWITZ.vol * 100, y: MARKOWITZ.ret * 100 }], backgroundColor: cssVar("--good"), pointRadius: 9, pointHoverRadius: 11, pointStyle: "star" },
@@ -408,7 +413,7 @@ function renderFrontierChart() {
 
   document.getElementById("frontier-legend").innerHTML = `
     <div class="legend-item"><span class="legend-dot" style="background:${cssVar('--border-strong')}"></span>Combinacoes possiveis</div>
-    ${ASSET_ORDER.map(sym => `<div class="legend-item"><span class="legend-dot" style="background:var(${ASSET_ACCENT_VAR[sym]})"></span>${sym} isolado</div>`).join("")}
+    ${ASSET_ORDER.map(sym => `<div class="legend-item"><span class="legend-dot" style="background:${accentColorFor(sym)}"></span>${sym} isolado</div>`).join("")}
     <div class="legend-item"><span class="legend-dot" style="background:${cssVar('--text-primary')}"></span>Seu portfolio</div>
     <div class="legend-item"><span class="legend-dot" style="background:${cssVar('--good')}"></span>Otimo Markowitz</div>
   `;
@@ -429,7 +434,7 @@ function renderMarkowitzCard() {
   document.getElementById("markowitz-card").innerHTML = `
     <div class="mk-title">🏆 Portfolio otimo (Markowitz)</div>
     <div>Para maximizar o Sharpe (melhor retorno ajustado ao risco), long-only:</div>
-    <div class="mk-weights">${ASSET_ORDER.map(sym => `${sym}: ${(MARKOWITZ.w[sym] * 100).toFixed(0)}%`).join(" · ")}</div>
+    <div class="mk-weights">${sigWeightSymbols(MARKOWITZ.w).map(sym => `${sym}: ${(MARKOWITZ.w[sym] * 100).toFixed(0)}%`).join(" · ")}</div>
     <div class="mk-stats">
       <div><div class="label">Retorno esperado</div><div class="value">${fmtPct(MARKOWITZ.ret * 100)} a.a.</div></div>
       <div><div class="label">Volatilidade</div><div class="value">${fmtNum(MARKOWITZ.vol * 100, 1)}%</div></div>
@@ -465,7 +470,7 @@ function renderShell() {
     <header class="top">
       <div>
         <h1>Medidas Econometricas</h1>
-        <div class="sub">Correlacao, simulador de portfolio e otimizacao de Markowitz — EWZ · FXE · EEM · XLK · XLE</div>
+        <div class="sub">Correlacao, simulador de portfolio e otimizacao de Markowitz — ${ASSET_ORDER.length} ativos (EWZ, FXE, EEM + ETFs setoriais e macro)</div>
       </div>
     </header>
     <div class="disclaimer-banner">⚠️ Ferramenta educacional. Todos os numeros vem de dados historicos (ultimos ${WINDOW} pregoes) e nao constituem recomendacao de investimento — retorno passado nao garante retorno futuro.</div>
@@ -504,12 +509,12 @@ function renderShell() {
   `;
 
   document.getElementById("sliders-host").innerHTML = ASSET_ORDER.map(sym => `
-    <div class="slider-row" style="--slider-accent:var(${ASSET_ACCENT_VAR[sym]})">
+    <div class="slider-row" style="--slider-accent:${accentColorFor(sym)}">
       <div class="slider-head">
-        <span class="name"><span class="asset-dot" style="background:var(${ASSET_ACCENT_VAR[sym]})"></span>${sym}</span>
-        <span class="val" id="slider-val-${sym}">${sliderWeights[sym]}%</span>
+        <span class="name"><span class="asset-dot" style="background:${accentColorFor(sym)}"></span>${sym}</span>
+        <span class="val" id="slider-val-${sym}">${fmtNum(sliderWeights[sym], 1)}%</span>
       </div>
-      <input type="range" min="0" max="100" step="1" id="slider-${sym}" value="${sliderWeights[sym]}" />
+      <input type="range" min="0" max="100" step="0.5" id="slider-${sym}" value="${sliderWeights[sym]}" />
     </div>
   `).join("");
 
@@ -534,7 +539,6 @@ async function init() {
     return;
   }
   computeReturnsAndStats();
-  computeFullCorrelation();
   buildFrontierAndMarkowitz();
   renderShell();
   renderFrontierChart();
