@@ -24,12 +24,32 @@ ASSETS = {
     "EWZ": "iShares MSCI Brazil ETF",
     "EEM": "iShares MSCI Emerging Markets ETF",
     "FXE": "Invesco CurrencyShares Euro Trust",
-    # Comparison-only assets for the Medidas Econometricas page (correlation,
-    # portfolio simulator, efficient frontier). Radar Macro and Fundo both
-    # hardcode their own 3-symbol ORDER arrays and ignore any extra keys
-    # here, so adding these does NOT create new tabs/positions there.
+    # Portfolio-simulator comparison assets for Medidas Econometricas (also
+    # get the full treatment - intraday, rolling vol/Sharpe, bands - because
+    # they were once considered for the same rolling-metrics treatment as
+    # the 3 core assets; kept here rather than moved to COMPARISON_ONLY
+    # below to avoid re-plumbing js/medidas.js's ASSET_ORDER lookups).
     "XLK": "Technology Select Sector SPDR Fund",
     "XLE": "Energy Select Sector SPDR Fund",
+}
+
+# Correlation-matrix-only assets (Medidas Econometricas's heatmap, per
+# Rodrigo's request to broaden it - not the portfolio simulator/frontier/
+# Markowitz section, which stays scoped to ASSETS above). These only need
+# daily close prices - no intraday, no rolling vol/Sharpe/bands, since the
+# heatmap computes its own correlation directly from `close`. Radar Macro
+# and Fundo don't read this bucket at all.
+COMPARISON_ONLY = {
+    "XTN": "SPDR S&P Transportation ETF",
+    "XLY": "Consumer Discretionary Select Sector SPDR Fund",
+    "GLD": "SPDR Gold Shares",
+    "XLV": "Health Care Select Sector SPDR Fund",
+    "XLP": "Consumer Staples Select Sector SPDR Fund",
+    "XLI": "Industrial Select Sector SPDR Fund",
+    "XLB": "Materials Select Sector SPDR Fund",
+    "XLF": "Financial Select Sector SPDR Fund",
+    "XLU": "Utilities Select Sector SPDR Fund",
+    "TLT": "iShares 20+ Year Treasury Bond ETF",
 }
 
 VOL_WINDOW = 21    # ~1 trading month
@@ -248,6 +268,20 @@ def main():
             series["intraday"] = {"times": [], "close": []}
         out["assets"][symbol] = series
         print(f"{symbol}: {len(rows)} daily rows, {len(series['intraday']['times'])} intraday points, last close {series['stats']['last_close']}")
+
+    out["comparison_assets"] = {}
+    for symbol, name in COMPARISON_ONLY.items():
+        try:
+            rows = fetch_daily(symbol)
+            rows = [(d, c) for d, c in rows if d >= cutoff]
+            out["comparison_assets"][symbol] = {
+                "name": name,
+                "dates": [d.isoformat() for d, _ in rows],
+                "close": [round(c, 4) for _, c in rows],
+            }
+            print(f"{symbol} (comparison-only): {len(rows)} daily rows")
+        except Exception as exc:  # one bad symbol shouldn't fail the whole run
+            print(f"{symbol}: fetch failed ({exc}), skipping")
 
     try:
         out["cdi"] = fetch_cdi(cutoff, datetime.date.today())

@@ -1,15 +1,26 @@
 /*
  * Medidas Econometricas - correlation, a long-only portfolio simulator, an
- * efficient-frontier scatter, and a max-Sharpe (Markowitz) recommendation
- * over EWZ/FXE/EEM plus two comparison-only ETFs, XLK and XLE (Technology
- * and Energy Select Sector SPDR). Everything is computed client-side from
- * data/etf_data.json's existing daily `close` arrays (same file the other
- * two pages read, fetched via the same Yahoo Finance pipeline in
+ * efficient-frontier scatter, and a max-Sharpe (Markowitz) recommendation.
+ *
+ * Two different asset universes on this one page, on purpose:
+ *  - ASSET_ORDER (5 tickers): the portfolio simulator/frontier/Markowitz
+ *    section. Kept small because N adjustable sliders stops being usable
+ *    well before N=15.
+ *  - CORR_ASSET_ORDER (15 tickers): the correlation heatmap only, per
+ *    Rodrigo's request to broaden *that section specifically* to a wider
+ *    sector-ETF universe (XLK/XTN/XLY/GLD/XLV/XLP/XLE/XLI/XLB/XLF/XLU/TLT)
+ *    without touching the simulator. getClose()/getName() below read
+ *    transparently from either data/etf_data.json bucket (`assets` - full
+ *    rolling-metrics treatment - or the lighter `comparison_assets`, close
+ *    prices only) so the heatmap code doesn't care which bucket a symbol
+ *    lives in.
+ *
+ * Everything is computed client-side from data/etf_data.json (same file
+ * the other two pages read, fetched via the same Yahoo Finance pipeline in
  * scripts/fetch_and_compute.py) plus its `cdi` field for the risk-free
  * rate - no new data pipeline, consistent with how the Fundo page works.
- * XLK/XLE are added to fetch_and_compute.py's ASSETS dict but Radar Macro
- * and Fundo both hardcode their own 3-symbol order and ignore extra keys,
- * so this stays scoped to this page only.
+ * Radar Macro and Fundo both hardcode their own 3-symbol order and ignore
+ * every extra key here, so none of this leaks into those two pages.
  *
  * Educational tool, not investment advice - every number here is a
  * historical-sample estimate over a 63-trading-day window, which is a
@@ -22,21 +33,34 @@
 // - don't reorder without re-checking that.
 const ASSET_ORDER = ["FXE", "EWZ", "XLK", "XLE", "EEM"];
 const ASSET_ACCENT_VAR = { EWZ: "--accent-ewz", FXE: "--accent-fxe", EEM: "--accent-eem", XLK: "--accent-xlk", XLE: "--accent-xle" };
+
+// Correlation-heatmap-only universe (15 tickers). No per-asset accent
+// colors here - at this count a fully CVD-validated categorical palette
+// isn't practical, and it's unnecessary anyway since every row/column is
+// already labeled by its ticker text in the matrix itself.
+const CORR_ASSET_ORDER = ["EWZ", "FXE", "EEM", "XLK", "XLE", "XTN", "XLY", "GLD", "XLV", "XLP", "XLI", "XLB", "XLF", "XLU", "TLT"];
+
 const WINDOW = 63; // trading days - correlation, covariance and realized-return window (all consistent)
 const TRADING_DAYS = 252;
 const FRONTIER_SAMPLES = 2500; // random long-only weight draws for the feasible-set cloud (grid search doesn't scale past ~3 assets)
 
 let ETF = null;
-let RETURNS = {};      // sym -> array of daily returns over the last WINDOW days
-let ANN_RETURN = {};   // sym -> annualized realized return over the window
-let COV = null;        // 3x3 annualized covariance matrix, order = ASSET_ORDER
-let CORR = null;       // 3x3 correlation matrix
+let RETURNS = {};      // sym -> array of daily returns over the last WINDOW days (memoized, shared by both universes)
+let ANN_RETURN = {};   // sym -> annualized realized return over the window (portfolio universe only)
+let COV = null;        // 5x5 annualized covariance matrix, order = ASSET_ORDER (portfolio universe)
+let CORR = null;       // 5x5 correlation matrix (portfolio universe)
+let CORR_FULL = null;  // 15x15 correlation matrix, order = CORR_ASSET_ORDER (heatmap only)
 let SIGMA = {};        // sym -> annualized volatility
 let RF = 0;            // annualized risk-free rate (from CDI)
 let FRONTIER_CLOUD = [];
 let MARKOWITZ = null;  // { w: [.,.,.], ret, vol, sharpe }
 let sliderWeights = { EWZ: 30, FXE: 20, EEM: 20, XLK: 15, XLE: 15 };
 const charts = {};
+
+function getAssetData(sym) { return (ETF.assets && ETF.assets[sym]) || (ETF.comparison_assets && ETF.comparison_assets[sym]); }
+function getClose(sym) { return getAssetData(sym).close; }
+function getDates(sym) { return getAssetData(sym).dates; }
+function getName(sym) { return getAssetData(sym).name; }
 
 function fmtPct(v, digits = 1) { if (v === null || v === undefined || Number.isNaN(v)) return "—"; return (v >= 0 ? "+" : "") + v.toFixed(digits) + "%"; }
 function fmtNum(v, digits = 2) { if (v === null || v === undefined || Number.isNaN(v)) return "—"; return v.toFixed(digits); }
@@ -45,14 +69,40 @@ function mean(arr) { return arr.reduce((a, b) => a + b, 0) / arr.length; }
 
 // --- data prep --------------------------------------------------------------
 
+// Shared by both universes; memoized in RETURNS so a symbol present in both
+// (e.g. EWZ) isn't recomputed.
+function windowReturns(sym) {
+  if (RETURNS[sym]) return RETURNS[sym];
+  const close = getClose(sym);
+  const n = close.length;
+  const windowCloses = close.slice(n - WINDOW - 1); // need WINDOW+1 prices for WINDOW returns
+  const rets = [];
+  for (let i = 1; i < windowCloses.length; i++) rets.push(windowCloses[i] / windowCloses[i - 1] - 1);
+  RETURNS[sym] = rets;
+  return rets;
+}
+
+function computeFullCorrelation() {
+  CORR_ASSET_ORDER.forEach(sym => windowReturns(sym));
+  CORR_FULL = CORR_ASSET_ORDER.map(symI => CORR_ASSET_ORDER.map(symJ => {
+    const ri = RETURNS[symI], rj = RETURNS[symJ];
+    const mi = mean(ri), mj = mean(rj);
+    let cov = 0;
+    for (let k = 0; k < ri.length; k++) cov += (ri[k] - mi) * (rj[k] - mj);
+    cov /= ri.length - 1;
+    let vi = 0, vj = 0;
+    for (let k = 0; k < ri.length; k++) { vi += (ri[k] - mi) ** 2; vj += (rj[k] - mj) ** 2; }
+    vi /= ri.length - 1; vj /= rj.length - 1;
+    return cov / Math.sqrt(vi * vj);
+  }));
+}
+
 function computeReturnsAndStats() {
   ASSET_ORDER.forEach(sym => {
-    const close = ETF.assets[sym].close;
+    const rets = windowReturns(sym);
+    const close = getClose(sym);
     const n = close.length;
-    const windowCloses = close.slice(n - WINDOW - 1); // need WINDOW+1 prices for WINDOW returns
-    const rets = [];
-    for (let i = 1; i < windowCloses.length; i++) rets.push(windowCloses[i] / windowCloses[i - 1] - 1);
-    RETURNS[sym] = rets;
+    const windowCloses = close.slice(n - WINDOW - 1);
     const totalReturn = windowCloses[windowCloses.length - 1] / windowCloses[0] - 1;
     ANN_RETURN[sym] = Math.pow(1 + totalReturn, TRADING_DAYS / WINDOW) - 1;
   });
@@ -200,51 +250,51 @@ function corrColor(v) {
 }
 
 function renderCorrelation(root) {
+  const order = CORR_ASSET_ORDER;
   const cells = [];
   cells.push(`<div></div>`);
-  ASSET_ORDER.forEach(sym => cells.push(`<div class="corr-label"><span class="asset-dot" style="background:var(${ASSET_ACCENT_VAR[sym]})"></span>${sym}</div>`));
-  ASSET_ORDER.forEach((symRow, i) => {
-    cells.push(`<div class="corr-label"><span class="asset-dot" style="background:var(${ASSET_ACCENT_VAR[symRow]})"></span>${symRow}</div>`);
-    ASSET_ORDER.forEach((symCol, j) => {
-      const v = CORR[i][j];
+  order.forEach(sym => cells.push(`<div class="corr-label">${sym}</div>`));
+  order.forEach((symRow, i) => {
+    cells.push(`<div class="corr-label">${symRow}</div>`);
+    order.forEach((symCol, j) => {
+      const v = CORR_FULL[i][j];
       const textColor = Math.abs(v) > 0.55 ? "#0a0e14" : cssVar("--text-primary");
       cells.push(`<div class="corr-cell" style="background:${corrColor(v)}; color:${textColor}">${v.toFixed(2)}</div>`);
     });
   });
 
   const pairs = [];
-  for (let i = 0; i < ASSET_ORDER.length; i++) {
-    for (let j = i + 1; j < ASSET_ORDER.length; j++) {
-      pairs.push({ a: ASSET_ORDER[i], b: ASSET_ORDER[j], v: CORR[i][j] });
+  for (let i = 0; i < order.length; i++) {
+    for (let j = i + 1; j < order.length; j++) {
+      pairs.push({ a: order[i], b: order[j], v: CORR_FULL[i][j] });
     }
   }
   const avgCorr = mean(pairs.map(p => p.v));
   const divGeral = Math.max(0, Math.min(100, (1 - avgCorr) * 100));
   const divLabel = divGeral >= 70 ? "alta" : divGeral >= 40 ? "moderada" : "baixa";
 
-  // With 5 assets (10 pairs) listing every one is noisy - highlight the
-  // extremes (most redundant pair, best diversifier) instead of all 10.
+  // 15 assets = 105 pairs - listing every one is noise. Highlight the top 3
+  // most redundant and top 3 best diversifiers instead.
   const byAbsDesc = [...pairs].sort((a, b) => Math.abs(b.v) - Math.abs(a.v));
-  const mostRedundant = byAbsDesc[0];
-  const bestDiversifier = byAbsDesc[byAbsDesc.length - 1];
+  const mostRedundant = byAbsDesc.slice(0, 3);
+  const bestDiversifiers = byAbsDesc.slice(-3).reverse();
   const describePair = (p, verdict) => {
     const level = Math.abs(p.v) >= 0.6 ? "alta" : Math.abs(p.v) >= 0.3 ? "moderada" : "baixa";
     const sign = p.v >= 0 ? "positiva" : "negativa";
     return `<li><strong>${p.a} × ${p.b}</strong> correlacao ${level} ${sign} (${fmtNum(p.v)}) — ${verdict}</li>`;
   };
   const interpLines = [
-    describePair(mostRedundant, Math.abs(mostRedundant.v) >= 0.3 ? "o par mais redundante da lista: se diversificar, some pouco valor" : "ate o par mais correlacionado aqui e fraco — universo bem diversificado"),
-    describePair(bestDiversifier, "o melhor par para diversificar (menor correlacao, em modulo)"),
+    `<li class="group-label">Pares mais redundantes (correlacao mais forte em modulo):</li>`,
+    ...mostRedundant.map(p => describePair(p, "se diversificar, esse par soma pouco valor")),
+    `<li class="group-label">Melhores pares para diversificar (correlacao mais fraca em modulo):</li>`,
+    ...bestDiversifiers.map(p => describePair(p, p.v < 0 ? "correlacao negativa: tende a compensar movimentos" : "bom par para diversificar")),
   ].join("");
 
-  root.innerHTML = `
-    <div class="corr-grid">${cells.join("")}</div>
-    <div class="corr-scale"><span>-1 (inversa)</span><span class="bar"></span><span>+1 (junto)</span></div>
-  `;
+  root.innerHTML = `<div class="corr-grid">${cells.join("")}</div>`;
   document.getElementById("corr-interp").innerHTML = `
     <div class="info-title">📊 Interpretacao</div>
     <ul>${interpLines}</ul>
-    <div class="div-score">Diversificacao geral (correlacao media entre os pares): <strong>${divGeral.toFixed(0)}% (${divLabel})</strong></div>
+    <div class="div-score">Diversificacao geral (correlacao media entre os ${pairs.length} pares): <strong>${divGeral.toFixed(0)}% (${divLabel})</strong></div>
   `;
 }
 
@@ -422,7 +472,8 @@ function renderShell() {
 
     <div class="section-title">Matriz de correlacao (${WINDOW} pregoes)</div>
     <div class="corr-wrap">
-      <div id="corr-grid-host"></div>
+      <div class="corr-scroll"><div id="corr-grid-host"></div></div>
+      <div class="corr-scale"><span>-1 (inversa)</span><span class="bar"></span><span>+1 (junto)</span></div>
       <div class="info-card" id="corr-interp"></div>
     </div>
 
@@ -483,6 +534,7 @@ async function init() {
     return;
   }
   computeReturnsAndStats();
+  computeFullCorrelation();
   buildFrontierAndMarkowitz();
   renderShell();
   renderFrontierChart();
