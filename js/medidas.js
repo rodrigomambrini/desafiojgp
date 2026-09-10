@@ -1,10 +1,15 @@
 /*
- * Medidas Econometricas - correlation, a long-only 3-asset portfolio
- * simulator, an efficient-frontier scatter, and a max-Sharpe (Markowitz)
- * recommendation for EWZ/FXE/EEM. Everything is computed client-side from
+ * Medidas Econometricas - correlation, a long-only portfolio simulator, an
+ * efficient-frontier scatter, and a max-Sharpe (Markowitz) recommendation
+ * over EWZ/FXE/EEM plus two comparison-only ETFs, XLK and XLE (Technology
+ * and Energy Select Sector SPDR). Everything is computed client-side from
  * data/etf_data.json's existing daily `close` arrays (same file the other
- * two pages read) plus its `cdi` field for the risk-free rate - no new
- * data pipeline, consistent with how the Fundo page works.
+ * two pages read, fetched via the same Yahoo Finance pipeline in
+ * scripts/fetch_and_compute.py) plus its `cdi` field for the risk-free
+ * rate - no new data pipeline, consistent with how the Fundo page works.
+ * XLK/XLE are added to fetch_and_compute.py's ASSETS dict but Radar Macro
+ * and Fundo both hardcode their own 3-symbol order and ignore extra keys,
+ * so this stays scoped to this page only.
  *
  * Educational tool, not investment advice - every number here is a
  * historical-sample estimate over a 63-trading-day window, which is a
@@ -12,11 +17,14 @@
  * the UI, not just in this comment.
  */
 
-const ASSET_ORDER = ["EWZ", "FXE", "EEM"];
-const ASSET_ACCENT_VAR = { EWZ: "--accent-ewz", FXE: "--accent-fxe", EEM: "--accent-eem" };
+// Order picked for CVD-safe adjacency across all 5 accent hues (validated
+// by hand the same way Radar Macro's EWZ/FXE/EEM order was - see CLAUDE.md)
+// - don't reorder without re-checking that.
+const ASSET_ORDER = ["FXE", "EWZ", "XLK", "XLE", "EEM"];
+const ASSET_ACCENT_VAR = { EWZ: "--accent-ewz", FXE: "--accent-fxe", EEM: "--accent-eem", XLK: "--accent-xlk", XLE: "--accent-xle" };
 const WINDOW = 63; // trading days - correlation, covariance and realized-return window (all consistent)
 const TRADING_DAYS = 252;
-const FRONTIER_STEP = 0.02; // 2% grid over the 3-asset simplex, long-only
+const FRONTIER_SAMPLES = 2500; // random long-only weight draws for the feasible-set cloud (grid search doesn't scale past ~3 assets)
 
 let ETF = null;
 let RETURNS = {};      // sym -> array of daily returns over the last WINDOW days
@@ -27,7 +35,7 @@ let SIGMA = {};        // sym -> annualized volatility
 let RF = 0;            // annualized risk-free rate (from CDI)
 let FRONTIER_CLOUD = [];
 let MARKOWITZ = null;  // { w: [.,.,.], ret, vol, sharpe }
-let sliderWeights = { EWZ: 40, FXE: 30, EEM: 30 };
+let sliderWeights = { EWZ: 30, FXE: 20, EEM: 20, XLK: 15, XLE: 15 };
 const charts = {};
 
 function fmtPct(v, digits = 1) { if (v === null || v === undefined || Number.isNaN(v)) return "—"; return (v >= 0 ? "+" : "") + v.toFixed(digits) + "%"; }
@@ -72,12 +80,14 @@ function portfolioReturn(w) {
   return ASSET_ORDER.reduce((s, sym) => s + w[sym] * ANN_RETURN[sym], 0);
 }
 function portfolioVariance(w) {
+  const n = ASSET_ORDER.length;
   const wv = ASSET_ORDER.map(sym => w[sym]);
   let v = 0;
-  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) v += wv[i] * wv[j] * COV[i][j];
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) v += wv[i] * wv[j] * COV[i][j];
   return v;
 }
 function portfolioStats(w) {
+  const n = ASSET_ORDER.length;
   const ret = portfolioReturn(w);
   const variance = portfolioVariance(w);
   const vol = Math.sqrt(variance);
@@ -86,31 +96,93 @@ function portfolioStats(w) {
   const wv = ASSET_ORDER.map(sym => w[sym]);
   const sigmaW = COV.map(row => row.reduce((s, c, j) => s + c * wv[j], 0));
   const contrib = {};
-  ASSET_ORDER.forEach((sym, i) => { contrib[sym] = variance > 0 ? (wv[i] * sigmaW[i]) / variance : 1 / 3; });
+  ASSET_ORDER.forEach((sym, i) => { contrib[sym] = variance > 0 ? (wv[i] * sigmaW[i]) / variance : 1 / n; });
   const enb = 1 / ASSET_ORDER.reduce((s, sym) => s + contrib[sym] ** 2, 0);
-  const diversification = ((enb - 1) / (ASSET_ORDER.length - 1)) * 100;
+  const diversification = ((enb - 1) / (n - 1)) * 100;
   return { ret, vol, sharpe, contrib, diversification };
+}
+
+// --- linear algebra (small, dense, N<=5 - a plain Gauss-Jordan solve is plenty) ---
+
+function solveLinearSystem(A, b) {
+  const n = b.length;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let col = 0; col < n; col++) {
+    let pivot = col;
+    for (let r = col + 1; r < n; r++) if (Math.abs(M[r][col]) > Math.abs(M[pivot][col])) pivot = r;
+    [M[col], M[pivot]] = [M[pivot], M[col]];
+    const pv = M[col][col];
+    if (Math.abs(pv) < 1e-12) continue; // near-singular subsystem; caller filters bad results
+    for (let c = col; c <= n; c++) M[col][c] /= pv;
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const factor = M[r][col];
+      for (let c = col; c <= n; c++) M[r][c] -= factor * M[col][c];
+    }
+  }
+  return M.map(row => row[n]);
+}
+
+// Long-only max-Sharpe (tangency) portfolio via the standard iterative
+// heuristic: solve the unconstrained tangency portfolio (proportional to
+// Sigma^-1 (mu - rf)); if that has negative weights, drop the most negative
+// asset and re-solve on the remaining subset; repeat. Exact for this size
+// (<=5 assets) and much more precise than sampling for finding the optimum -
+// random sampling is used only for the *visualized* feasible-set cloud below.
+function longOnlyTangencyPortfolio() {
+  let active = [...ASSET_ORDER];
+  while (active.length > 1) {
+    const idx = active.map(sym => ASSET_ORDER.indexOf(sym));
+    const covSub = idx.map(i => idx.map(j => COV[i][j]));
+    const muSub = active.map(sym => ANN_RETURN[sym] - RF);
+    const raw = solveLinearSystem(covSub, muSub);
+    // Check negativity on the *raw* (pre-normalization) vector, not the
+    // sum-normalized one: raw'*excess = raw'*Sigma*raw >= 0 always (Sigma
+    // is PSD), so when sum(raw) < 0, dividing by it flips every sign and
+    // silently turns the max-Sharpe direction into the min-Sharpe one -
+    // that bug once had this function return 100% of the worst asset.
+    // A negative raw_i means the unconstrained solve wants to *short*
+    // asset i - exactly the one to drop for a long-only solution.
+    const minIdx = raw.indexOf(Math.min(...raw));
+    if (raw[minIdx] >= -1e-9) {
+      const sum = raw.reduce((a, b) => a + b, 0);
+      if (sum > 1e-9) {
+        const w = raw.map(v => v / sum);
+        const full = {};
+        ASSET_ORDER.forEach(sym => { full[sym] = 0; });
+        active.forEach((sym, i) => { full[sym] = Math.max(0, w[i]); });
+        return full;
+      }
+    }
+    active.splice(minIdx, 1);
+  }
+  const full = {};
+  ASSET_ORDER.forEach(sym => { full[sym] = 0; });
+  full[active[0]] = 1;
+  return full;
+}
+
+function randomSimplexWeights() {
+  // Dirichlet(1,1,...,1) via normalized Exponential(1) draws = uniform over the simplex.
+  const draws = ASSET_ORDER.map(() => -Math.log(Math.random()));
+  const sum = draws.reduce((a, b) => a + b, 0);
+  const w = {};
+  ASSET_ORDER.forEach((sym, i) => { w[sym] = draws[i] / sum; });
+  return w;
 }
 
 function buildFrontierAndMarkowitz() {
   const cloud = [];
-  let best = null;
-  const steps = Math.round(1 / FRONTIER_STEP); // integer loop counters avoid float drift from repeated +=
-  for (let i = 0; i <= steps; i++) {
-    const w1 = i / steps;
-    for (let j = 0; j <= steps - i; j++) {
-      const w2 = j / steps;
-      const w3 = Math.max(0, 1 - w1 - w2);
-      const w = { EWZ: w1, FXE: w2, EEM: w3 };
-      const s = portfolioStats(w);
-      cloud.push({ x: s.vol * 100, y: s.ret * 100 });
-      if (s.sharpe !== null && (best === null || s.sharpe > best.sharpe)) {
-        best = { w, ret: s.ret, vol: s.vol, sharpe: s.sharpe, contrib: s.contrib, diversification: s.diversification };
-      }
-    }
+  for (let k = 0; k < FRONTIER_SAMPLES; k++) {
+    const w = randomSimplexWeights();
+    const s = portfolioStats(w);
+    cloud.push({ x: s.vol * 100, y: s.ret * 100 });
   }
   FRONTIER_CLOUD = cloud;
-  MARKOWITZ = best;
+
+  const w = longOnlyTangencyPortfolio();
+  const s = portfolioStats(w);
+  MARKOWITZ = { w, ret: s.ret, vol: s.vol, sharpe: s.sharpe, contrib: s.contrib, diversification: s.diversification };
 }
 
 // --- rendering ---------------------------------------------------------------
@@ -146,22 +218,24 @@ function renderCorrelation(root) {
       pairs.push({ a: ASSET_ORDER[i], b: ASSET_ORDER[j], v: CORR[i][j] });
     }
   }
-  const highest = pairs.reduce((a, b) => (Math.abs(b.v) > Math.abs(a.v) ? b : a));
-  const lowest = pairs.reduce((a, b) => (Math.abs(b.v) < Math.abs(a.v) ? b : a));
   const avgCorr = mean(pairs.map(p => p.v));
   const divGeral = Math.max(0, Math.min(100, (1 - avgCorr) * 100));
   const divLabel = divGeral >= 70 ? "alta" : divGeral >= 40 ? "moderada" : "baixa";
 
-  const interpLines = pairs.map(p => {
+  // With 5 assets (10 pairs) listing every one is noisy - highlight the
+  // extremes (most redundant pair, best diversifier) instead of all 10.
+  const byAbsDesc = [...pairs].sort((a, b) => Math.abs(b.v) - Math.abs(a.v));
+  const mostRedundant = byAbsDesc[0];
+  const bestDiversifier = byAbsDesc[byAbsDesc.length - 1];
+  const describePair = (p, verdict) => {
     const level = Math.abs(p.v) >= 0.6 ? "alta" : Math.abs(p.v) >= 0.3 ? "moderada" : "baixa";
     const sign = p.v >= 0 ? "positiva" : "negativa";
-    const note = Math.abs(p.v) >= 0.6
-      ? "correlacao alta: esse par se move parecido, diversificacao redundante entre eles"
-      : Math.abs(p.v) < 0.3
-        ? "correlacao baixa: bom par para diversificar"
-        : "correlacao intermediaria";
-    return `<li><strong>${p.a} × ${p.b}</strong> correlacao ${level} ${sign} (${fmtNum(p.v)}) — ${note}</li>`;
-  }).join("");
+    return `<li><strong>${p.a} × ${p.b}</strong> correlacao ${level} ${sign} (${fmtNum(p.v)}) — ${verdict}</li>`;
+  };
+  const interpLines = [
+    describePair(mostRedundant, Math.abs(mostRedundant.v) >= 0.3 ? "o par mais redundante da lista: se diversificar, some pouco valor" : "ate o par mais correlacionado aqui e fraco — universo bem diversificado"),
+    describePair(bestDiversifier, "o melhor par para diversificar (menor correlacao, em modulo)"),
+  ].join("");
 
   root.innerHTML = `
     <div class="corr-grid">${cells.join("")}</div>
@@ -215,13 +289,20 @@ function renderSimResults() {
   updateFrontierCurrentPoint(s);
 }
 
+function zeroWeights() {
+  const w = {};
+  ASSET_ORDER.forEach(sym => { w[sym] = 0; });
+  return w;
+}
+
 function renderAlternativesTable(currentStats) {
-  const ewz100 = portfolioStats({ EWZ: 1, FXE: 0, EEM: 0 });
-  const equal = portfolioStats({ EWZ: 1 / 3, FXE: 1 / 3, EEM: 1 / 3 });
+  const ewz100 = portfolioStats({ ...zeroWeights(), EWZ: 1 });
+  const equalW = 1 / ASSET_ORDER.length;
+  const equal = portfolioStats(Object.fromEntries(ASSET_ORDER.map(sym => [sym, equalW])));
   const rows = [
     { label: "Seu portfolio", s: currentStats, cls: "current" },
     { label: "100% EWZ", s: ewz100, cls: "" },
-    { label: "Equal weight (33/33/34)", s: equal, cls: "" },
+    { label: `Equal weight (${(equalW * 100).toFixed(0)}% cada, ${ASSET_ORDER.length} ativos)`, s: equal, cls: "" },
     { label: `Otimo Markowitz (${ASSET_ORDER.map(sym => `${sym} ${(MARKOWITZ.w[sym] * 100).toFixed(0)}%`).join("/")})`, s: MARKOWITZ, cls: "optimal" },
   ];
   return `
@@ -291,7 +372,7 @@ function updateFrontierCurrentPoint(stats) {
 }
 
 function renderMarkowitzCard() {
-  const ewz100 = portfolioStats({ EWZ: 1, FXE: 0, EEM: 0 });
+  const ewz100 = portfolioStats({ ...zeroWeights(), EWZ: 1 });
   const sharpeGain = ((MARKOWITZ.sharpe - ewz100.sharpe) / Math.abs(ewz100.sharpe)) * 100;
   const riskCut = ((ewz100.vol - MARKOWITZ.vol) / ewz100.vol) * 100;
 
@@ -334,7 +415,7 @@ function renderShell() {
     <header class="top">
       <div>
         <h1>Medidas Econometricas</h1>
-        <div class="sub">Correlacao, simulador de portfolio e otimizacao de Markowitz — EWZ · FXE · EEM</div>
+        <div class="sub">Correlacao, simulador de portfolio e otimizacao de Markowitz — EWZ · FXE · EEM · XLK · XLE</div>
       </div>
     </header>
     <div class="disclaimer-banner">⚠️ Ferramenta educacional. Todos os numeros vem de dados historicos (ultimos ${WINDOW} pregoes) e nao constituem recomendacao de investimento — retorno passado nao garante retorno futuro.</div>
@@ -365,7 +446,8 @@ function renderShell() {
 
     <footer>
       Correlacao, retorno e volatilidade estimados sobre os ultimos ${WINDOW} pregoes de fechamento (Yahoo Finance, mesma fonte do Radar Macro). Taxa livre de risco (rf) = CDI anualizado
-      (Banco Central, mesma fonte usada na aba Fundo). Fronteira eficiente calculada em uma grade de pesos long-only (sem venda a descoberto), passo de ${(FRONTIER_STEP * 100).toFixed(0)}%.
+      (Banco Central, mesma fonte usada na aba Fundo). Nuvem da fronteira eficiente: ${FRONTIER_SAMPLES} carteiras long-only (sem venda a descoberto) amostradas aleatoriamente; o otimo de
+      Markowitz e calculado analiticamente (portfolio tangente), nao por amostragem.
       Estimar retorno esperado a partir de retorno realizado de curto prazo e uma pratica ruidosa — trate os numeros como ilustrativos, nao preditivos. Nao constitui recomendacao de investimento.
     </footer>
   `;

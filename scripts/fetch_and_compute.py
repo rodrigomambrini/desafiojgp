@@ -24,6 +24,12 @@ ASSETS = {
     "EWZ": "iShares MSCI Brazil ETF",
     "EEM": "iShares MSCI Emerging Markets ETF",
     "FXE": "Invesco CurrencyShares Euro Trust",
+    # Comparison-only assets for the Medidas Econometricas page (correlation,
+    # portfolio simulator, efficient frontier). Radar Macro and Fundo both
+    # hardcode their own 3-symbol ORDER arrays and ignore any extra keys
+    # here, so adding these does NOT create new tabs/positions there.
+    "XLK": "Technology Select Sector SPDR Fund",
+    "XLE": "Energy Select Sector SPDR Fund",
 }
 
 VOL_WINDOW = 21    # ~1 trading month
