@@ -24,9 +24,12 @@
  * every extra key here, so none of this leaks into those two pages.
  *
  * Educational tool, not investment advice - every number here is a
- * historical-sample estimate over a 63-trading-day window, which is a
- * noisy way to estimate *expected* returns in particular. Said plainly in
- * the UI, not just in this comment.
+ * historical-sample estimate. Return/volatility/Markowitz use a short
+ * 63-trading-day window (noisy for *expected* returns in particular, but
+ * reacts fast to regime changes); correlation uses its own much longer
+ * ~10-year window instead (CORR_WINDOW below) since correlation is a far
+ * more stable quantity and 63 days is too short a sample to pin it down
+ * precisely. Said plainly in the UI, not just in this comment.
  */
 
 const ASSET_ORDER = ["EWZ", "FXE", "EEM", "XLK", "XLE", "SPY", "XTN", "XLY", "GLD", "XLV", "XLP", "XLI", "XLB", "XLF", "XLU", "TLT"];
@@ -36,15 +39,18 @@ function accentColorFor(sym) { return ASSET_ACCENT_VAR[sym] ? cssVar(ASSET_ACCEN
 // weights above 0.5%, sorted descending, for any "which assets matter here" display.
 function sigWeightSymbols(w) { return ASSET_ORDER.filter(sym => w[sym] > 0.005).sort((a, b) => w[b] - w[a]); }
 
-const WINDOW = 63; // trading days - correlation, covariance and realized-return window (all consistent)
+const WINDOW = 63; // trading days - covariance and realized-return window (reacts fast to regime changes; used for vol/Sharpe/Markowitz)
+const CORR_WINDOW = 2520; // ~10 trading years (252*10) - correlation only. Per Rodrigo: 63 pregoes is too short/noisy to estimate correlation precisely; correlation itself is far more stable over a long history than a short-window expected-return estimate is, so it gets its own, much longer window instead of reusing WINDOW.
+const CORR_WINDOW_YEARS_LABEL = "10 anos";
 const TRADING_DAYS = 252;
 const FRONTIER_SAMPLES = 4000; // random long-only weight draws for the feasible-set cloud (grid search doesn't scale past ~3 assets)
 
 let ETF = null;
 let RETURNS = {};      // sym -> array of daily returns over the last WINDOW days
+let CORR_RETURNS = {}; // sym -> array of daily returns over the last CORR_WINDOW days (long history, correlation only)
 let ANN_RETURN = {};   // sym -> annualized realized return over the window
-let COV = null;        // 16x16 annualized covariance matrix, order = ASSET_ORDER
-let CORR = null;       // 16x16 correlation matrix, order = ASSET_ORDER - also drives the heatmap directly
+let COV = null;        // 16x16 annualized covariance matrix (WINDOW), order = ASSET_ORDER
+let CORR = null;       // 16x16 correlation matrix (CORR_WINDOW), order = ASSET_ORDER - drives the heatmap directly
 let SIGMA = {};        // sym -> annualized volatility
 let RF = 0;            // annualized risk-free rate (from CDI)
 let FRONTIER_CLOUD = [];
@@ -64,18 +70,21 @@ function mean(arr) { return arr.reduce((a, b) => a + b, 0) / arr.length; }
 
 // --- data prep --------------------------------------------------------------
 
-// Shared by both universes; memoized in RETURNS so a symbol present in both
-// (e.g. EWZ) isn't recomputed.
-function windowReturns(sym) {
-  if (RETURNS[sym]) return RETURNS[sym];
+// Generic "last N trading days of returns" helper, memoized in whichever
+// cache the caller passes (RETURNS for the 63-day window, CORR_RETURNS for
+// the long correlation window) so a symbol present in both isn't recomputed.
+function returnsOverWindow(sym, window, cache) {
+  if (cache[sym]) return cache[sym];
   const close = getClose(sym);
   const n = close.length;
-  const windowCloses = close.slice(n - WINDOW - 1); // need WINDOW+1 prices for WINDOW returns
+  const windowCloses = close.slice(Math.max(0, n - window - 1)); // need window+1 prices for `window` returns; clamps if less history exists
   const rets = [];
   for (let i = 1; i < windowCloses.length; i++) rets.push(windowCloses[i] / windowCloses[i - 1] - 1);
-  RETURNS[sym] = rets;
+  cache[sym] = rets;
   return rets;
 }
+function windowReturns(sym) { return returnsOverWindow(sym, WINDOW, RETURNS); }
+function corrWindowReturns(sym) { return returnsOverWindow(sym, CORR_WINDOW, CORR_RETURNS); }
 
 function computeReturnsAndStats() {
   ASSET_ORDER.forEach(sym => {
@@ -97,11 +106,38 @@ function computeReturnsAndStats() {
 
   ASSET_ORDER.forEach((sym, i) => { SIGMA[sym] = Math.sqrt(COV[i][i]); });
 
-  CORR = ASSET_ORDER.map((_, i) => ASSET_ORDER.map((_, j) => COV[i][j] / (Math.sqrt(COV[i][i]) * Math.sqrt(COV[j][j]))));
-
   const cdiRates = ETF.cdi?.daily_rate_pct || [];
   const latestCdi = cdiRates.length ? cdiRates[cdiRates.length - 1] : 0;
   RF = Math.pow(1 + latestCdi / 100, TRADING_DAYS) - 1;
+}
+
+// Correlation gets its own, much longer window than COV/ANN_RETURN above:
+// correlation is a far more stable quantity over a long history than a
+// short-window expected-return estimate is, and 63 pregoes (~1 quarter) is
+// too noisy a sample to pin down pairwise correlation precisely. Not
+// annualized (correlation is scale-invariant) - just the Pearson correlation
+// of daily returns over CORR_WINDOW trading days.
+function computeCorrelation() {
+  ASSET_ORDER.forEach(sym => corrWindowReturns(sym));
+  // Align every asset to the shortest available series among the 16 (in case
+  // one has less history than CORR_WINDOW+1 rows) so every pairwise
+  // correlation is computed over the exact same calendar window - all 16 are
+  // US-listed ETFs sharing the same NYSE trading calendar, so this is just a
+  // length clamp, not a date-realignment.
+  const minLen = Math.min(...ASSET_ORDER.map(sym => CORR_RETURNS[sym].length));
+  const aligned = {};
+  ASSET_ORDER.forEach(sym => { aligned[sym] = CORR_RETURNS[sym].slice(-minLen); });
+
+  CORR = ASSET_ORDER.map(symI => ASSET_ORDER.map(symJ => {
+    const ri = aligned[symI], rj = aligned[symJ];
+    const mi = mean(ri), mj = mean(rj);
+    let sij = 0, sii = 0, sjj = 0;
+    for (let k = 0; k < ri.length; k++) {
+      const di = ri[k] - mi, dj = rj[k] - mj;
+      sij += di * dj; sii += di * di; sjj += dj * dj;
+    }
+    return sij / Math.sqrt(sii * sjj);
+  }));
 }
 
 // --- portfolio math (w = {EWZ, FXE, EEM} fractions summing to 1) -----------
@@ -442,7 +478,7 @@ function renderMarkowitzCard() {
       <div><div class="label">Diversificacao</div><div class="value">${fmtNum(MARKOWITZ.diversification, 0)}%</div></div>
     </div>
     <div class="mk-vs">Vs. 100% EWZ: ${sharpeGain >= 0 ? "+" : ""}${sharpeGain.toFixed(0)}% de Sharpe, ${riskCut >= 0 ? "-" : "+"}${Math.abs(riskCut).toFixed(0)}% de risco.</div>
-    <div class="mk-note">⚠️ Baseado em dados historicos dos ultimos ${WINDOW} pregoes (retorno, volatilidade e correlacao). Sharpe maximo nao significa "melhor para todos" — depende do seu perfil e tolerancia a risco. Nao constitui recomendacao de investimento.</div>
+    <div class="mk-note">⚠️ Retorno e volatilidade baseados nos ultimos ${WINDOW} pregoes; correlacao entre ativos baseada em ${CORR_WINDOW_YEARS_LABEL} de historico. Sharpe maximo nao significa "melhor para todos" — depende do seu perfil e tolerancia a risco. Nao constitui recomendacao de investimento.</div>
   `;
 }
 
@@ -473,9 +509,9 @@ function renderShell() {
         <div class="sub">Correlacao, simulador de portfolio e otimizacao de Markowitz — ${ASSET_ORDER.length} ativos (EWZ, FXE, EEM + ETFs setoriais e macro)</div>
       </div>
     </header>
-    <div class="disclaimer-banner">⚠️ Ferramenta educacional. Todos os numeros vem de dados historicos (ultimos ${WINDOW} pregoes) e nao constituem recomendacao de investimento — retorno passado nao garante retorno futuro.</div>
+    <div class="disclaimer-banner">⚠️ Ferramenta educacional. Todos os numeros vem de dados historicos (correlacao: ${CORR_WINDOW_YEARS_LABEL}; retorno, volatilidade e Markowitz: ultimos ${WINDOW} pregoes) e nao constituem recomendacao de investimento — retorno passado nao garante retorno futuro.</div>
 
-    <div class="section-title">Matriz de correlacao (${WINDOW} pregoes)</div>
+    <div class="section-title">Matriz de correlacao (${CORR_WINDOW_YEARS_LABEL})</div>
     <div class="corr-wrap">
       <div class="corr-scroll"><div id="corr-grid-host"></div></div>
       <div class="corr-scale"><span>-1 (inversa)</span><span class="bar"></span><span>+1 (junto)</span></div>
@@ -501,9 +537,10 @@ function renderShell() {
     <div class="markowitz-card" id="markowitz-card"></div>
 
     <footer>
-      Correlacao, retorno e volatilidade estimados sobre os ultimos ${WINDOW} pregoes de fechamento (Yahoo Finance, mesma fonte do Radar Macro). Taxa livre de risco (rf) = CDI anualizado
-      (Banco Central, mesma fonte usada na aba Fundo). Nuvem da fronteira eficiente: ${FRONTIER_SAMPLES} carteiras long-only (sem venda a descoberto) amostradas aleatoriamente; o otimo de
-      Markowitz e calculado analiticamente (portfolio tangente), nao por amostragem.
+      Correlacao estimada sobre os ultimos ${CORR_WINDOW_YEARS_LABEL} de fechamento diario (janela mais longa, para uma estimativa mais precisa e menos ruidosa de como os ativos se movem entre si).
+      Retorno, volatilidade e a recomendacao de Markowitz usam uma janela mais curta, os ultimos ${WINDOW} pregoes (reage mais rapido a mudancas de regime). Mesma fonte para tudo: Yahoo Finance
+      (mesma do Radar Macro). Taxa livre de risco (rf) = CDI anualizado (Banco Central, mesma fonte usada na aba Fundo). Nuvem da fronteira eficiente: ${FRONTIER_SAMPLES} carteiras long-only
+      (sem venda a descoberto) amostradas aleatoriamente; o otimo de Markowitz e calculado analiticamente (portfolio tangente), nao por amostragem.
       Estimar retorno esperado a partir de retorno realizado de curto prazo e uma pratica ruidosa — trate os numeros como ilustrativos, nao preditivos. Nao constitui recomendacao de investimento.
     </footer>
   `;
@@ -539,6 +576,7 @@ async function init() {
     return;
   }
   computeReturnsAndStats();
+  computeCorrelation();
   buildFrontierAndMarkowitz();
   renderShell();
   renderFrontierChart();

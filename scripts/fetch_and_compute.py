@@ -56,7 +56,16 @@ COMPARISON_ONLY = {
 VOL_WINDOW = 21    # ~1 trading month
 SHARPE_WINDOW = 63  # ~1 trading quarter
 TRADING_DAYS = 252
-YEARS_TO_KEEP = 6   # keep enough history for a 5y view plus rolling-window warmup
+# 11y: Medidas Econometricas' correlation matrix (js/medidas.js's CORR_WINDOW,
+# ~10 trading years) needs ~2520 daily closes for every one of the 16 assets
+# plus a buffer, per Rodrigo's request that 63 pregoes was too short a window
+# to estimate correlation precisely. Return/vol/Sharpe/Markowitz still use the
+# short 63-day window on purpose (reacts to regime changes) - only
+# correlation was moved to this longer one. Side effect: Radar Macro's
+# percentile bands (bands.vol/bands.sharpe) and "Max" chart range now cover
+# ~11 years instead of ~6 - more history, a more robust percentile sample,
+# not a regression.
+YEARS_TO_KEEP = 11
 
 
 def fetch_daily(symbol):
@@ -179,13 +188,24 @@ def fetch_cdi(start_date, end_date):
     Rodrigo's Mambrini-Asset-Management project already uses for Tesouro
     Selic (series 11). Not on Yahoo Finance - CDI is a BR interbank rate,
     not a traded instrument with a price series.
+
+    The `dados` endpoint hard-caps the dataInicial/dataFinal span at 3652
+    days (10 years) - anything longer 406s with no useful body. Confirmed
+    empirically: 3652 days works, 3653 doesn't. CDI is only ever used from
+    the Fundo page's inception date forward anyway, so silently clamping the
+    requested start_date here loses nothing in practice, and keeps this
+    working even as YEARS_TO_KEEP (the ETF price-history cutoff) grows past
+    10 years for the correlation window.
     """
+    max_span = datetime.timedelta(days=3652)
+    if end_date - start_date > max_span:
+        start_date = end_date - max_span
     url = (
         "https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados"
         f"?formato=json&dataInicial={start_date.strftime('%d/%m/%Y')}"
         f"&dataFinal={end_date.strftime('%d/%m/%Y')}"
     )
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         rows = json.load(resp)
     dates, rates = [], []
